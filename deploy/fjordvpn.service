@@ -1,0 +1,25 @@
+[Unit]
+Description=FjordVPN local multi-VPN dashboard
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+User=fjordvpn
+Group=fjordvpn
+SupplementaryGroups=docker
+WorkingDirectory=/opt/fjordvpn
+EnvironmentFile=/etc/fjordvpn.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/fjordvpn/.venv/bin/python /opt/fjordvpn/app.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/fjordvpn
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+data/
+test-results/
+*.conf
+*.key
+*.env
+*.tar.gz
