@@ -1,0 +1,13 @@
+*
+!requirements.txt
+!app.py
+!configuration.py
+!hub.py
+!runtime.py
+!store.py
+!relay/
+!relay/observer.py
+!templates/
+!templates/*.html
+!static/
+!static/**

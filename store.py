@@ -23,6 +23,7 @@ class Store:
     def __init__(self, root, networks):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.root.chmod(0o700)
         (self.root / 'profiles').mkdir(exist_ok=True, mode=0o700)
         self.networks = networks
         self.lock = threading.RLock()

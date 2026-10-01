@@ -7,3 +7,6 @@ test-results/
 *.key
 *.env
 *.tar.gz
+secrets/
+*login*.txt
+auth.json

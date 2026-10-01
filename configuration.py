@@ -6,6 +6,18 @@ import ipaddress
 import re
 
 
+def parse_networks(value):
+    try:
+        networks=[ipaddress.IPv4Network(n.strip()) for n in value.split(',')]
+        private=[ipaddress.IPv4Network(n) for n in ('10.0.0.0/8','172.16.0.0/12','192.168.0.0/16')]
+        tunnel=ipaddress.IPv4Network('10.2.0.0/24')
+        if not 1<=len(networks)<=8 or any(not any(n.subnet_of(p) for p in private) or n.overlaps(tunnel) for n in networks):
+            raise ValueError()
+        return networks
+    except (ValueError,AttributeError):
+        raise ValueError('LAN_SUBNETS skal indeholde private IPv4-net i CIDR-format uden overlap med 10.2.0.0/24.') from None
+
+
 def parse_wireguard(raw):
     if not raw or len(raw) > 16384:
         raise ValueError('Vælg en WireGuard .conf-fil på højst 16 KB.')

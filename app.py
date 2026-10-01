@@ -9,40 +9,59 @@ import time
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
+from hub import Hub, HubError
+from configuration import parse_networks
 from runtime import Runtime
 from store import Store, atomic
 
 
 def create_app(root=None, testing=False, runtime_factory=Runtime):
     root = Path(root or os.environ.get('FJORDVPN_DATA','/var/lib/fjordvpn'))
-    networks = [ipaddress.IPv4Network(n) for n in os.environ.get('LAN_SUBNETS','192.168.1.0/24').split(',')]
+    networks = parse_networks(os.environ.get('LAN_SUBNETS','192.168.1.0/24'))
     store = Store(root, networks)
+    hub = Hub()
     auth_path = root/'auth.json'
     if not auth_path.exists():
         password = secrets.token_urlsafe(18)
-        atomic(auth_path, json.dumps({'secret':secrets.token_hex(32),'password_hash':generate_password_hash(password)}))
-        atomic(root/'initial-login.txt', 'Brugernavn: admin\nAdgangskode: '+password+'\n')
+        atomic(auth_path, json.dumps({'secret':secrets.token_hex(32),'password_hash':generate_password_hash(password) if not hub.enabled else ''}))
+        if not hub.enabled:
+            atomic(root/'initial-login.txt', 'Brugernavn: admin\nAdgangskode: '+password+'\n')
     auth = json.loads(auth_path.read_text())
     app = Flask(__name__)
     app.config.update(SECRET_KEY=auth['secret'], MAX_CONTENT_LENGTH=32768,
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
         PERMANENT_SESSION_LIFETIME=28800, TESTING=testing)
-    hosts = set(os.environ.get('UI_ALLOWED_HOSTS','127.0.0.1,localhost').split(','))
+    hosts = {'127.0.0.1','localhost'} | {h.strip() for h in os.environ.get('UI_ALLOWED_HOSTS','').split(',') if h.strip()}
     runtime = runtime_factory(store)
-    app.extensions.update(store=store, runtime=runtime)
+    app.extensions.update(store=store, runtime=runtime, hub=hub)
     login_failures = {}
     auth_lock = threading.Lock()
 
     @app.before_request
     def guard():
-        if request.host.split(':')[0] not in hosts:
+        host=request.host.split(':')[0]
+        allowed=host in hosts
+        if not allowed and not os.environ.get('UI_ALLOWED_HOSTS'):
+            try:
+                allowed=any(ipaddress.IPv4Address(host) in n for n in networks)
+            except ValueError:
+                pass
+        if not allowed:
             return 'Ukendt værtsnavn', 403
         if request.method == 'POST':
             expected = session.get('csrf','')
             actual = request.headers.get('X-CSRF-Token') or request.form.get('csrf','')
             if not expected or not secrets.compare_digest(expected,actual):
                 return jsonify(error='Genindlæs siden og prøv igen.'),403
-        if request.endpoint not in ('login','static','health') and not session.get('authenticated'):
+        public=request.endpoint in ('login','hub_login','logout','static','health')
+        if not public and hub.enabled and session.get('authenticated'):
+            try:
+                hub.current(session.get('hub_uid'))
+            except HubError as exc:
+                if exc.status!=503:
+                    session.clear()
+                return jsonify(error=str(exc)),exc.status
+        if not public and not session.get('authenticated'):
             if request.path.startswith('/api/'):
                 return jsonify(error='Log ind for at fortsætte.'),401
             return redirect(url_for('login'))
@@ -69,16 +88,41 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
                 login_failures[address] = recent
                 if len(recent)>=8:
                     return render_template('login.html',error='For mange forsøg. Vent fem minutter.'),429
-                valid = check_password_hash(auth['password_hash'],request.form.get('password',''))
-                if request.form.get('username')=='admin' and valid:
+                user=None
+                if hub.enabled:
+                    try:
+                        user=hub.authenticate(request.form.get('username',''),request.form.get('password',''))
+                        valid=True
+                    except HubError as exc:
+                        valid=False
+                        error=str(exc)
+                else:
+                    valid=request.form.get('username')=='admin' and check_password_hash(auth['password_hash'],request.form.get('password',''))
+                if valid:
                     session.clear()
                     session.update(authenticated=True, csrf=secrets.token_urlsafe(32))
+                    if user:
+                        session['hub_uid']=user['id']
                     session.permanent=True
                     login_failures.pop(address,None)
                     return redirect('/')
                 recent.append(time.time())
-                error='Forkert brugernavn eller adgangskode.'
-        return render_template('login.html',error=error)
+                error=error or 'Forkert brugernavn eller adgangskode.'
+        return render_template('login.html',error=error, managed=hub.enabled)
+
+    @app.get('/hub-login')
+    def hub_login():
+        if not hub.enabled:
+            return redirect('/login')
+        try:
+            user=hub.sso(request.args.get('token',''))
+        except HubError as exc:
+            session.setdefault('csrf',secrets.token_urlsafe(32))
+            return render_template('login.html',error=str(exc),managed=True),exc.status
+        session.clear()
+        session.update(authenticated=True,hub_uid=user['id'],csrf=secrets.token_urlsafe(32))
+        session.permanent=True
+        return redirect('/')
 
     @app.post('/logout')
     def logout():
@@ -137,13 +181,15 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
         except ValueError as e:
             return jsonify(error=str(e)),400
 
+    stop_event=threading.Event()
+    app.extensions['stop_event']=stop_event
     def worker():
-        while True:
+        while not stop_event.is_set():
             try:
                 runtime.tick()
             except Exception:
                 app.logger.error('Driftskontrol fejlede; prøver igen.')
-            time.sleep(3)
+            stop_event.wait(3)
 
     if not testing:
         threading.Thread(target=worker,daemon=True).start()
@@ -160,4 +206,13 @@ if __name__=='__main__':
         bind=next(a['local'] for interface in info for a in interface['addr_info']
                   if any(ipaddress.IPv4Address(a['local']) in n for n in allowed))
         os.environ['UI_ALLOWED_HOSTS']=','.join([bind,'127.0.0.1','localhost'])
-    serve(create_app(),host=bind,port=8088,threads=6)
+    application=create_app()
+    if application.extensions['runtime'].project:
+        import signal
+        def stop_managed(*_):
+            application.extensions['stop_event'].set()
+            application.extensions['runtime'].shutdown()
+            raise SystemExit(0)
+        signal.signal(signal.SIGTERM,stop_managed)
+        signal.signal(signal.SIGINT,stop_managed)
+    serve(application,host=bind,port=8088,threads=6)

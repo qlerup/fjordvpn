@@ -61,6 +61,21 @@ def test_auth_csrf_and_host(app):
     assert 'legacy' not in app.extensions
 
 
+def test_empty_host_setting_keeps_healthcheck_and_lan_access(tmp_path,monkeypatch):
+    monkeypatch.setenv('UI_ALLOWED_HOSTS','')
+    app=create_app(tmp_path,testing=True,runtime_factory=FakeRuntime)
+    c=app.test_client()
+    assert c.get('/healthz',headers={'Host':'127.0.0.1:8088'}).status_code==200
+    assert c.get('/login',headers={'Host':'192.168.1.110:8098'}).status_code==200
+    assert c.get('/login',headers={'Host':'evil.test'}).status_code==403
+
+
+@pytest.mark.parametrize('value',['0.0.0.0/0','1.1.1.0/24','10.0.0.0/8','10.2.0.0/24','invalid'])
+def test_rejects_lan_allowlist_that_bypasses_tunnel(value):
+    from configuration import parse_networks
+    with pytest.raises(ValueError):parse_networks(value)
+
+
 def test_upload_multiple_keep_secrets_server_side(app):
     c,h=login(app)
     a=upload(c,h,1,start=True);b=upload(c,h,2)

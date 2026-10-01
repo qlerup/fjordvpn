@@ -1,0 +1,48 @@
+name: fjordvpn-hub
+services:
+  vpn-image:
+    image: qmcgaw/gluetun@sha256:fa19cc76b2af13d57a8d3dc3066f2ada061b1c761b8aecf989b3877c0486e027
+    # Download/check the image only. This service never starts a VPN.
+    entrypoint: ["/bin/sh", "-c", "exit 0"]
+    restart: "no"
+  app:
+    build: .
+    image: fjordvpn-app:local
+    container_name: ${CONTAINER_NAME:-fjordvpn}
+    restart: unless-stopped
+    stop_grace_period: 60s
+    depends_on:
+      vpn-image:
+        condition: service_completed_successfully
+    ports:
+      - "${APP_PORT:-8098}:8088"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      FJORDVPN_DATA: /data
+      HOST_DATA_DIR: ${DATA_DIR:?Choose an absolute DATA_DIR path}
+      LAN_SUBNETS: ${LAN_SUBNETS:-192.168.1.0/24}
+      UI_ALLOWED_HOSTS: ${UI_ALLOWED_HOSTS:-}
+      FJORDHUB_URL: ${FJORDHUB_URL:-}
+      FJORDHUB_API_KEY: ${FJORDHUB_API_KEY:-}
+      FJORDHUB_APP_ID: ${FJORDHUB_APP_ID:-fjordvpn}
+      TZ: ${TZ:-Europe/Copenhagen}
+    volumes:
+      - "${DATA_DIR}:/data"
+      - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8088/healthz',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

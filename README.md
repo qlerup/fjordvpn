@@ -1,83 +1,120 @@
-# FjordVPN
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="static/brand/fjordvpn-logo-light.png">
+    <img src="static/brand/fjordvpn-logo-dark.png" alt="FjordVPN" width="440">
+  </picture>
+</p>
 
-Lokal webapp til flere uafhængige Proton WireGuard-forbindelser. Upload en `.conf`,
-vælg navn og eventuelt et lokalt TCP-mål, og start forbindelsen fra UI'et.
-Hver profil har sin egen Gluetun-container og relay i samme netværksnamespace.
-UI'et kører uden for VPN-forbindelserne og er tilgængeligt, når de er slukket.
+<p align="center">Flere Proton VPN-forbindelser. Ét lokalt overblik.<br>
+Upload WireGuard-konfigurationer, se offentlige adresser og videresend TCP-trafik til dine tjenester.</p>
 
-## Installation på denne server
+## Installér i FjordHub
 
-- Proxmox `192.168.1.250`, ny unprivileged LXC **1014**, `fjordvpn`.
-- UI: `http://192.168.1.182:8088` (DHCP; appen finder LAN-adressen ved opstart).
-- 2 CPU, 2 GB RAM, 16 GB disk, TUN og Docker nesting.
-- App: `/opt/fjordvpn`; drift: `systemctl status fjordvpn`.
-- Indstillinger: `/etc/fjordvpn.env`.
-- Ved aflevering er listen tom. Ingen nye VPN'er er startet.
-- Eksisterende VM1012 og LXC1013 er ikke integreret eller ændret.
+FjordVPN er en app i [FjordHub](https://github.com/qlerup/fjordhub).
 
-## Brug
+1. Opdatér appkataloget, og vælg **FjordVPN → Installér**.
+2. Vælg web-port (standard **8098**), lokalnet i CIDR-format og datamappe.
+3. Åbn appen fra FjordHub. SSO logger dig ind med din FjordHub-bruger.
+4. Vælg **Ny VPN**, og upload en ny Proton WireGuard `.conf` med **NAT-PMP** slået til.
+5. Vælg eventuelt et lokalt TCP-mål og start forbindelsen, når du er klar.
 
-1. Log ind med `admin` og adgangskoden i den separat afleverede loginfil.
-2. Hent en ny WireGuard-konfiguration fra Proton med **NAT-PMP** aktiveret.
-3. Vælg **Ny VPN**, navn og fil. Vælg eventuelt lokal IPv4 og TCP-port.
-4. Vælg om VPN'en skal starte med det samme. Den offentlige IP/port vises,
-   når tunnelen er klar. Hvis NAT-PMP ikke er klar, vises det som afventende.
-5. **Indstillinger** ændrer målet, **Sluk** lukker tunnelen og videresendelsen.
-   Konfigurationen bevares. Flere profiler kan være aktive samtidig.
+Kun FjordVPN-administratorer eller FjordHub-administratorer med appadgang får
+adgang. FjordHub er loginmyndighed; lokale konti bruges ikke i en administreret
+installation. Fjernet adgang og rolleændringer kontrolleres løbende.
 
-Genbrug ikke samme Proton-nøgle i to aktive installationer. Appen afviser
-dubletter inden for sine egne profiler; den har ikke adgang til gamle servere.
-Brug nye konfigurationer, mens de eksisterende installationer stadig kører.
+Installationen opretter **ingen VPN-profiler** og starter **ingen VPN-tunnel**.
+Eksisterende VPN-installationer på andre servere berøres ikke.
 
-Denne version understøtter Proton WireGuard med IPv4-serveradresse, ét TCP-mål
-pr. VPN og lokalnet angivet i `LAN_SUBNETS`. IPv6 fjernes fra importerede profiler.
-OpenVPN, UDP-relay, DNS-opdatering og certifikatstyring indgår ikke. En reverse
-proxy på det lokale mål kan fordele TCP/HTTPS-trafik mellem flere tjenester.
-Videresendelse ændrer ikke den lokale servers øvrige udgående trafik.
+## Krav
 
-## Drift og sikkerhed
+- Linux med Docker og Docker Compose v2.
+- Docker-værten skal have `/dev/net/tun` og understøtte `NET_ADMIN` i containere.
+- Proton VPN-konfiguration med WireGuard, IPv4-server og NAT-PMP/port forwarding.
+- Et privat IPv4-lokalnet, som ikke overlapper Protons `10.2.0.0/24`.
 
-Filer i `/var/lib/fjordvpn` indeholder VPN-nøgler og loginoplysninger. Bevar denne
-mappe ved opdatering. Mapper har mode 0700, konfigurationer mode 0600. Nøgler
-sendes ikke tilbage til browseren og medtages ikke i fejlbeskeder. Uploads
-fortolkes strengt som konfiguration; hooks, scripts og ukendte felter afvises.
+I Proxmox LXC skal TUN være givet videre til den LXC, som kører Docker.
+På Proxmox-versioner med device passthrough kan en **ledig** `devN`-plads bruges,
+fx `pct set <CTID> --dev0 /dev/net/tun`, hvis `dev0` ikke allerede er optaget.
+Genstart derefter den berørte LXC på et passende tidspunkt. FjordVPN ændrer
+ikke Proxmox-konfigurationen og genstarter ikke andre servere.
 
-Dashboardet bruger login, CSRF, Host-kontrol, sessionscookie og loginbegrænsning.
-Det bindes til containerens LAN-IPv4, ikke VPN-porten. Appbrugeren har Docker-adgang
-i den dedikerede LXC, men ingen Proxmox-nøgle eller adgang til gamle VPN-servere.
-Eksponer ikke dette HTTP-administrationsinterface via offentlig portforwarding.
-
-Profilernes ønskede tænd/sluk-tilstand og lokale mål gemmes atomisk og overlever
-genstart. Relay stopper, når VPN-healthcheck fejler, og følger den tildelte port.
-Docker-ressourcer skal matche appens ejerskabslabels, før de ændres.
-Gluetun bruger firewall/kill switch. Images hentes på forhånd ved installation.
+## Selvstændig Docker-installation
 
 ```sh
-systemctl status fjordvpn
-journalctl -u fjordvpn -n 50 --no-pager
-docker ps --filter label=dk.fjordvpn.managed=1
-systemctl restart fjordvpn
+git clone https://github.com/qlerup/fjordvpn.git
+cd fjordvpn
+cp .env.example .env
+# Ret DATA_DIR til en absolut sti og LAN_SUBNETS til dit lokalnet.
+docker compose up -d --build
 ```
 
-`systemctl stop fjordvpn` stopper administrationen, men lader aktive VPN'er køre.
-Sluk profiler fra UI'et, hvis selve tunnelerne også skal stoppes. Tag en beskyttet
-backup af `/var/lib/fjordvpn`, før appkode ændres. Rollback af denne første
-installation: stop den nye LXC1014; andre VPN-installationer er uafhængige.
+Åbn `http://SERVER-IP:8098`. Det første login er `admin`; en tilfældig adgangskode
+gemmes lokalt i `DATA_DIR/initial-login.txt`. Der er ingen standardadgangskode.
+Lad både `FJORDHUB_URL` og `FJORDHUB_API_KEY` være tomme ved selvstændig drift.
 
-## Udvikling og kontrol
+| Indstilling | Formål |
+|---|---|
+| `APP_PORT` | Webport, standard 8098 |
+| `DATA_DIR` | Absolut værtssti til private VPN-konfigurationer og tilstand |
+| `LAN_SUBNETS` | Tilladte private IPv4-net, kommaadskilt |
+| `UI_ALLOWED_HOSTS` | Valgfri liste med domæner og IP'er; tom accepterer lokalnet-IP'er |
+| `FJORDHUB_URL`, `FJORDHUB_API_KEY` | Udfyldes automatisk af FjordHub |
+
+## Forbindelser og videresendelse
+
+Hver profil får sin egen Gluetun-container og et TCP-relay i samme
+netværksnamespace. Dashboardet forbliver tilgængeligt, selv om en VPN er slukket.
+En profil kan sende den offentlige Proton-port til ét lokalt `IP:port`-mål.
+En reverse proxy på målet kan fordele HTTPS-trafik mellem flere tjenester.
+
+Relayet lukker ved et mislykket VPN-healthcheck og følger ændringer i den
+tildelte port. Den lokale servers øvrige udgående trafik ændres ikke.
+IPv6 udelades fra importerede profiler. OpenVPN og UDP-relay indgår ikke.
+DNS og HTTPS-certifikater administreres separat; IP/port kan skifte hos Proton.
+
+Brug ikke samme Proton-nøgle i to aktive installationer. Appen afviser dubletter
+blandt sine egne profiler, men har ingen adgang til andre VPN-servere. Brug
+separate konfigurationer, mens gamle installationer stadig kører.
+
+## Data, stop og afinstallation
+
+`DATA_DIR` indeholder private nøgler, profiler og loginoplysninger. Beskyt backup
+af denne mappe. Den monteres med samme værtssti i de enkelte VPN-containere.
+Nøgler vises ikke i API-svar, browseren eller fejlbeskeder. Uploads fortolkes
+strengt som konfiguration; shell-hooks og ekstra sektioner afvises.
+
+I Docker/FjordHub stopper appens nedlukning også dens egne VPN-containere.
+Den ønskede tænd/sluk-tilstand gemmes, så profiler genoptages ved opstart.
+Appens børnecontainere er mærket med dens Compose-projekt. Afinstallation via
+FjordHub fjerner runtime med `down --remove-orphans`, men bevarer data og nøgler.
+`docker compose down --remove-orphans` gør det samme ved manuel drift.
+
+Dashboardet har adgang til Docker-socket og skal behandles som administration
+af Docker-værten. Brug det på et betroet lokalnet; sæt HTTPS og adgangskontrol op
+før eventuel ekstern eksponering. Docker-data og UI har ingen Proxmox-nøgle.
+
+Den alternative systemd-installation i `deploy/` kan bruges på en dedikeret LXC.
+Her stopper stop af UI-servicen kun UI'et; sluk profiler i appen for også at stoppe
+tunnelerne. Brug aldrig systemd og Docker-udgaven på samme datamappe samtidig.
+
+## Ikoner og logoer
+
+[Brandmappen](static/brand/) indeholder originale SVG-logoer til lys/mørk
+baggrund, et transparent symbol, PNG-appikoner fra 16 til 1024 px, favicon og
+webmanifest. De kan gendannes med `python tools/build_brand.py`.
+
+## Udvikling og test
 
 ```sh
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
-pip install pytest playwright
-playwright install chromium
-pytest tests -q
-python tests/browser_check.py
+.venv/bin/pip install pytest playwright pillow
+.venv/bin/playwright install chromium
+.venv/bin/pytest tests -q
+.venv/bin/python tests/browser_check.py
 ```
 
-Testpakken bruger syntetiske konfigurationer og en simuleret Docker-klient.
-Browserkontrollen afprøver login, oprettelse af to profiler, dubletafvisning,
-målvalidering og redigering ved desktop- og mobilbredde uden at starte VPN'er.
-Live-kontrol efter deployment dækker login, tom profiloversigt, API og genstart.
-En rigtig tunnel/portvideresendelse skal afprøves med en ny brugeruploadet profil;
-der er bevidst ikke startet en ny tunnel ved aflevering.
+Tests dækker upload, validering, dubletter, login/CSRF, FjordHub-SSO og
+adgangstilbagekaldelse, adskilte Docker-ressourcer og værtssti-mapping.
+Browserkontrollen bruger syntetiske profiler ved desktop- og mobilbredde.
+Pakkeinstallation og oprydning kontrolleres isoleret uden at starte en VPN.

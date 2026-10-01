@@ -1,6 +1,7 @@
 """Docker lifecycle limited to this application's UUID-labelled resources."""
 import json
 import os
+from pathlib import Path
 import time
 
 import docker
@@ -15,6 +16,32 @@ class Runtime:
         self.store = store
         self.client = client or docker.from_env(timeout=15)
         self.errors = {}
+        self.project = ''
+        self.relay_image = 'fjordvpn-relay:1'
+        self.host_root = self.store.root
+        if os.environ.get('FJORDVPN_CONTAINER') == '1':
+            parent=self.client.containers.get(os.environ['HOSTNAME'])
+            self.project=parent.labels.get('com.docker.compose.project','')
+            self.relay_image=parent.attrs['Image']
+            source=next((m['Source'] for m in parent.attrs['Mounts'] if m['Destination']==str(store.root) and m['Type']=='bind'),None)
+            expected=os.environ.get('HOST_DATA_DIR','')
+            if not source or not expected.startswith('/') or source.rstrip('/')!=expected.rstrip('/'):
+                raise RuntimeError('HOST_DATA_DIR skal være den samme absolutte værtssti som datamappens bind-mount.')
+            self.host_root=Path(source)
+
+    def labels(self, ident, kind):
+        labels={OWNER:'1',LABEL:ident}
+        if self.project:
+            labels.update({'com.docker.compose.project':self.project,
+                'com.docker.compose.service':f'profile-{ident}-{kind}',
+                'com.docker.compose.oneoff':'False','com.docker.compose.config-hash':'fjordvpn-profile-v1'})
+        return labels
+
+    @property
+    def restart_policy(self):
+        # In Compose the manager restores desired profiles; stopping the app stops
+        # its tunnels, and `down --remove-orphans` owns their complete cleanup.
+        return {'Name':'no' if self.project else 'unless-stopped'}
 
     def container(self, ident, kind):
         try:
@@ -23,6 +50,8 @@ class Runtime:
             return None
         if c.labels.get(OWNER) != '1' or c.labels.get(LABEL) != ident:
             raise ValueError('En anden container bruger navnet. Den er ikke ændret.')
+        if self.project and c.labels.get('com.docker.compose.project')!=self.project:
+            raise ValueError('VPN-containeren tilhører en anden installation.')
         return c
 
     def reconcile(self, p):
@@ -36,17 +65,17 @@ class Runtime:
                         c.stop(timeout=5)
             return
         folder = self.store.directory(ident)
-        labels = {OWNER: '1', LABEL: ident}
+        host_folder=self.host_root/'profiles'/ident
         if vpn is None:
             vpn = self.client.containers.create(GLUETUN, name=f'fjordvpn-{ident}-vpn',
-                labels=labels, cap_add=['NET_ADMIN'], devices=['/dev/net/tun:/dev/net/tun'],
+                labels=self.labels(ident,'vpn'), cap_add=['NET_ADMIN'], devices=['/dev/net/tun:/dev/net/tun'],
                 environment={'TZ': 'Europe/Copenhagen', 'VPN_SERVICE_PROVIDER': 'custom',
                     'VPN_TYPE': 'wireguard', 'VPN_PORT_FORWARDING': 'on',
                     'VPN_PORT_FORWARDING_PROVIDER': 'protonvpn',
                     'FIREWALL_OUTBOUND_SUBNETS': ','.join(map(str, self.store.networks))},
-                volumes={str(folder / 'wg0.conf'): {'bind': '/gluetun/wireguard/wg0.conf', 'mode': 'ro'},
-                         str(folder / 'state'): {'bind': '/tmp/gluetun', 'mode': 'rw'}},
-                restart_policy={'Name': 'unless-stopped'},
+                volumes={str(host_folder / 'wg0.conf'): {'bind': '/gluetun/wireguard/wg0.conf', 'mode': 'ro'},
+                         str(host_folder / 'state'): {'bind': '/tmp/gluetun', 'mode': 'rw'}},
+                restart_policy=self.restart_policy,
                 mem_limit='384m', log_config=docker.types.LogConfig(type='json-file', config={'max-size':'5m','max-file':'2'}))
         if vpn.status != 'running':
             # Recreate the dependent namespace after each tunnel restart.
@@ -57,7 +86,7 @@ class Runtime:
             for name in ('forwarded_port', 'ip'):
                 (folder / 'state' / name).unlink(missing_ok=True)
             (folder / 'observed' / 'status.json').unlink(missing_ok=True)
-            vpn.update(restart_policy={'Name': 'unless-stopped'})
+            vpn.update(restart_policy=self.restart_policy)
             vpn.start()
         vpn.reload()
         if observer:
@@ -68,16 +97,17 @@ class Runtime:
                 observer.remove()
                 observer = None
         if observer is None:
-            observer = self.client.containers.create('fjordvpn-relay:1', name=f'fjordvpn-{ident}-relay',
-                labels=labels, network_mode='container:' + vpn.id,
+            extra={'command':['python','/app/relay/observer.py']} if os.environ.get('FJORDVPN_CONTAINER')=='1' else {}
+            observer = self.client.containers.create(self.relay_image, name=f'fjordvpn-{ident}-relay',
+                labels=self.labels(ident,'relay'), network_mode='container:' + vpn.id,
                 user=f'{os.getuid()}:{os.getgid()}',
                 environment={'LAN_SUBNETS': ','.join(map(str,self.store.networks))},
-                volumes={str(folder/'state'):{'bind':'/vpn-state','mode':'ro'},
-                    str(folder/'relay'):{'bind':'/config','mode':'ro'},
-                    str(folder/'observed'):{'bind':'/observed','mode':'rw'}},
+                volumes={str(host_folder/'state'):{'bind':'/vpn-state','mode':'ro'},
+                    str(host_folder/'relay'):{'bind':'/config','mode':'ro'},
+                    str(host_folder/'observed'):{'bind':'/observed','mode':'rw'}},
                 read_only=True, cap_drop=['ALL'], security_opt=['no-new-privileges:true'],
-                init=True, restart_policy={'Name':'unless-stopped'}, mem_limit='96m',
-                log_config=docker.types.LogConfig(type='json-file', config={'max-size':'2m','max-file':'2'}))
+                init=True, restart_policy=self.restart_policy, mem_limit='96m',
+                log_config=docker.types.LogConfig(type='json-file', config={'max-size':'2m','max-file':'2'}),**extra)
         if observer.status != 'running':
             observer.start()
 
@@ -115,6 +145,27 @@ class Runtime:
                 try:
                     self.reconcile(p)
                     self.errors.pop(p['id'], None)
-                except Exception:
+                except Exception as exc:
                     # Docker error bodies may contain configuration. Never send them to UI/logs.
-                    self.errors[p['id']] = 'Kunne ikke ændre VPN-driften. Kontrollér Docker og prøv igen.'
+                    if '/dev/net/tun' in str(exc):
+                        self.errors[p['id']] = 'TUN mangler på Docker-værten. Giv /dev/net/tun videre til din LXC, og prøv igen.'
+                    else:
+                        self.errors[p['id']] = 'Kunne ikke ændre VPN-driften. Kontrollér Docker og prøv igen.'
+
+    def shutdown(self):
+        """Compose stop leaves persistent profiles intact, but stops their runtime."""
+        if not self.project:
+            return
+        from concurrent.futures import ThreadPoolExecutor
+        def stop_profile(p):
+            for kind in ('relay','vpn'):
+                try:
+                    c=self.container(p['id'],kind)
+                    if c:
+                        c.update(restart_policy={'Name':'no'})
+                        c.stop(timeout=3)
+                except docker.errors.NotFound:
+                    pass
+        with self.store.lock:
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                list(pool.map(stop_profile,self.store.all()))
