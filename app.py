@@ -28,8 +28,11 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
             atomic(root/'initial-login.txt', 'Brugernavn: admin\nAdgangskode: '+password+'\n')
     auth = json.loads(auth_path.read_text())
     app = Flask(__name__)
+    # Hub SSO may arrive from another site; Lax carries the session through its
+    # top-level GET redirect. POST actions still require CSRF verification.
     app.config.update(SECRET_KEY=auth['secret'], MAX_CONTENT_LENGTH=32768,
-        SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Strict',
+        SESSION_COOKIE_NAME='fjordvpn_session',
+        SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax',
         PERMANENT_SESSION_LIFETIME=28800, TESTING=testing)
     hosts = {'127.0.0.1','localhost'} | {h.strip() for h in os.environ.get('UI_ALLOWED_HOSTS','').split(',') if h.strip()}
     runtime = runtime_factory(store)

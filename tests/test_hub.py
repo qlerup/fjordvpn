@@ -26,6 +26,9 @@ def test_sso_login_and_revoked_access(managed):
     client=managed.test_client()
     result=client.get('/hub-login?token=single-use-test')
     assert result.status_code==302 and result.location=='/'
+    cookie = result.headers['Set-Cookie']
+    assert cookie.startswith('fjordvpn_session=')
+    assert 'HttpOnly' in cookie and 'SameSite=Lax' in cookie
     with client.session_transaction() as s:
         assert s['hub_uid']==7
         assert 'single-use-test' not in json.dumps(dict(s))
