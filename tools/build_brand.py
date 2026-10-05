@@ -1,51 +1,88 @@
-"""Build the original vector identity and export app/browser assets.
+"""Export the approved standalone artwork (never crop or redraw it).
 
-Run with Playwright Chromium and Pillow installed. No network/fonts required.
+Development dependencies: Pillow and Playwright Chromium.
+Run from any directory: python scripts/build_brand.py
 """
 from pathlib import Path
+import base64
+import io
 import json
+from html import escape
 
-ROOT=Path(__file__).resolve().parents[1]
-OUT=ROOT/'static/brand'
-OUT.mkdir(parents=True,exist_ok=True)
+from PIL import Image
+from playwright.sync_api import sync_playwright
 
-def mark(color='#67dec2',node='#e9fff8'):
-    return f'''<path d="M128 35 211 72v55c0 45-33 78-83 99-50-21-83-54-83-99V72Z" fill="none" stroke="{color}" stroke-width="12" stroke-linejoin="round"/>
-<path d="M88 174V84h84v23h-59v21h40v23h-40v23Z" fill="{color}"/>
-<circle cx="169" cy="140" r="12" fill="{node}"/>'''
+ROOT = Path(__file__).resolve().parents[1]
+CONFIG = json.loads((ROOT / 'branding/exports.json').read_text(encoding='utf-8'))
 
-def svg(body,width=256,height=256):
-    return f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-label="FjordVPN">{body}</svg>'
 
-assets={
-    'fjordvpn-mark.svg':svg(mark(node='#67dec2')),
-    'fjordvpn-mark-dark.svg':svg(mark('#176e60','#176e60')),
-    'fjordvpn-icon.svg':svg('<rect width="256" height="256" rx="58" fill="#101c25"/>'+mark()),
-}
-for theme,ink in [('light','#edf3f7'),('dark','#172c36')]:
-    assets[f'fjordvpn-logo-{theme}.svg']=svg('<g transform="translate(4 0) scale(.65)">'+mark('#67dec2' if theme=='light' else '#176e60',ink)+'</g>'+f'<text x="190" y="116" fill="{ink}" font-family="Segoe UI,Arial,sans-serif" font-size="82" font-weight="650" letter-spacing="-3">Fjord<tspan fill="'+('#67dec2' if theme=='light' else '#176e60')+'">VPN</tspan></text>',580,170)
-for name,source in assets.items():
-    (OUT/name).write_text(source,encoding='utf-8')
-(OUT/'site.webmanifest').write_text(json.dumps({'name':'FjordVPN','short_name':'FjordVPN','start_url':'/',
-    'display':'standalone','background_color':'#0c1016','theme_color':'#101c25','icons':[
-        {'src':'/static/brand/fjordvpn-icon-192.png','sizes':'192x192','type':'image/png'},
-        {'src':'/static/brand/fjordvpn-icon-512.png','sizes':'512x512','type':'image/png'}]},indent=2))
+def destination(relative):
+    path = (ROOT / relative).resolve()
+    if not path.is_relative_to(ROOT):
+        raise ValueError('Brand export must remain inside the repository')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
-if __name__=='__main__':
-    from playwright.sync_api import sync_playwright
-    from PIL import Image
-    with sync_playwright() as p:
-        browser=p.chromium.launch()
-        page=browser.new_page()
-        for size in (16,32,48,180,192,256,512,1024):
-            page.set_viewport_size({'width':size,'height':size})
-            page.set_content('<style>html,body{margin:0}svg{display:block;width:100vw;height:100vh}</style>'+assets['fjordvpn-icon.svg'])
-            page.screenshot(path=str(OUT/f'fjordvpn-icon-{size}.png'),omit_background=True)
-        for theme in ('light','dark'):
-            page.set_viewport_size({'width':1160,'height':340})
-            page.set_content('<style>html,body{margin:0}svg{display:block;width:100vw;height:100vh}</style>'+assets[f'fjordvpn-logo-{theme}.svg'])
-            page.screenshot(path=str(OUT/f'fjordvpn-logo-{theme}.png'),omit_background=True)
+
+def export():
+    master = Image.open(ROOT / 'branding/icon-master.png').convert('RGBA')
+    # Keep the complete generated illustration, including its alpha channel.
+    embedded = io.BytesIO()
+    master.resize((512, 512), Image.Resampling.LANCZOS).save(embedded, format='PNG')
+    uri = 'data:image/png;base64,' + base64.b64encode(embedded.getvalue()).decode('ascii')
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch()
+        page = browser.new_page(device_scale_factor=1)
+        for item in CONFIG['exports']:
+            path = destination(item['path'])
+            width, height = item['size']
+            kind = item.get('kind', 'icon')
+            bg = item.get('background')
+            ink = item.get('ink', '#edf3f7')
+            if kind == 'icon' and path.suffix.lower() != '.svg':
+                fraction = item.get('scale', 1)
+                side = max(1, round(min(width, height) * fraction))
+                icon = master.resize((side, side), Image.Resampling.LANCZOS)
+                result = Image.new('RGBA', (width, height), bg or (0, 0, 0, 0))
+                result.alpha_composite(icon, ((width-side)//2, (height-side)//2))
+                if bg:
+                    result = result.convert('RGB')
+                if path.suffix.lower() == '.ico':
+                    result.save(path, sizes=[(n,n) for n in (16,24,32,48,64,128,256)])
+                elif path.suffix.lower() == '.icns':
+                    result.save(path, format='ICNS')
+                else:
+                    result.save(path, optimize=True)
+                continue
+            if kind == 'horizontal':
+                side = height * .88
+                x, y = 0, (height-side)/2
+                tx = side + height*.13
+                font = min(height*.42, (width-tx)*1.6/len(CONFIG['name']))
+                text = f'<text x="{tx}" y="{height*.53}" dominant-baseline="middle" font-size="{font}" fill="{ink}">{escape(CONFIG["name"])}</text>'
+            elif kind in ('stacked', 'social'):
+                side = min(height*.68, width*.7)
+                x, y = (width-side)/2, height*.035
+                font = min(height*.13, width*1.55/len(CONFIG['name']))
+                text = f'<text x="{width/2}" y="{height*.9}" text-anchor="middle" font-size="{font}" fill="{ink}">{escape(CONFIG["name"])}</text>'
+            else:
+                side = min(width, height) * item.get('scale', 1)
+                x, y = (width-side)/2, (height-side)/2
+                text = ''
+            backdrop = f'<rect width="100%" height="100%" fill="{bg}"/>' if bg else ''
+            svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-label="{escape(CONFIG["name"])}">'
+                   f'{backdrop}<image x="{x}" y="{y}" width="{side}" height="{side}" href="{uri}"/>'
+                   f'<g font-family="Arial,sans-serif" font-weight="700">{text}</g></svg>')
+            if path.suffix.lower() == '.svg':
+                path.write_text(svg, encoding='utf-8')
+            else:
+                page.set_viewport_size({'width': width, 'height': height})
+                page.set_content('<html><body style="margin:0;background:transparent">' + svg + '</body></html>')
+                page.locator('svg image').evaluate('(el) => new Promise((resolve, reject) => {const i = new Image(); i.onload = resolve; i.onerror = reject; i.src = el.getAttribute("href");})')
+                page.screenshot(path=str(path), omit_background=not bg)
         browser.close()
-    with Image.open(OUT/'fjordvpn-icon-256.png') as image:
-        image.save(OUT/'favicon.ico',sizes=[(16,16),(32,32),(48,48),(64,64),(128,128),(256,256)])
-    print('Exported SVG logos, PNG icons and wordmarks, favicon and web manifest.')
+    print(f'{CONFIG["name"]}: exported {len(CONFIG["exports"])} assets')
+
+
+if __name__ == '__main__':
+    export()

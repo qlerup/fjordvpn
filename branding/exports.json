@@ -1,0 +1,137 @@
+{
+  "name": "FjordVPN",
+  "exports": [
+    {
+      "path": "static/brand/favicon.ico",
+      "size": [
+        256,
+        256
+      ],
+      "kind": "icon"
+    },
+    {
+      "path": "static/brand/fjordvpn-icon-1024.png",
+      "size": [
+        1024,
+        1024
+      ],
+      "kind": "icon"
+    },
+    {
+      "path": "static/brand/fjordvpn-icon-16.png",
+      "size": [
+        16,
+        16
+      ],
+      "kind": "icon"
+    },
+    {
+      "path": "static/brand/fjordvpn-icon-180.png",
+      "size": [
+        180,
+        180
+      ],
+      "kind": "icon"
+    },
+    {
+      "path": "static/brand/fjordvpn-icon-192.png",
+      "size": [
+        192,
+        192
+      ],
+      "kind": "icon"
+    },
+    {
+      "path": "static/brand/fjordvpn-icon-256.png",
+      "size": [
+        256,
+        256
+      ],
+      "kind": "icon"
+    },
+    {
+      "path": "static/brand/fjordvpn-icon-32.png",
+      "size": [
+        32,
+        32
+      ],
+      "kind": "icon"
+    },
+    {
+      "path": "static/brand/fjordvpn-icon-48.png",
+      "size": [
+        48,
+        48
+      ],
+      "kind": "icon"
+    },
+    {
+      "path": "static/brand/fjordvpn-icon-512.png",
+      "size": [
+        512,
+        512
+      ],
+      "kind": "icon"
+    },
+    {
+      "path": "static/brand/fjordvpn-icon.svg",
+      "size": [
+        256,
+        256
+      ],
+      "kind": "icon"
+    },
+    {
+      "path": "static/brand/fjordvpn-logo-dark.png",
+      "size": [
+        1160,
+        340
+      ],
+      "kind": "horizontal",
+      "ink": "#172c36"
+    },
+    {
+      "path": "static/brand/fjordvpn-logo-dark.svg",
+      "size": [
+        580,
+        170
+      ],
+      "kind": "horizontal",
+      "ink": "#172c36"
+    },
+    {
+      "path": "static/brand/fjordvpn-logo-light.png",
+      "size": [
+        1160,
+        340
+      ],
+      "kind": "horizontal",
+      "ink": "#edf3f7"
+    },
+    {
+      "path": "static/brand/fjordvpn-logo-light.svg",
+      "size": [
+        580,
+        170
+      ],
+      "kind": "horizontal",
+      "ink": "#edf3f7"
+    },
+    {
+      "path": "static/brand/fjordvpn-mark-dark.svg",
+      "size": [
+        256,
+        256
+      ],
+      "kind": "icon"
+    },
+    {
+      "path": "static/brand/fjordvpn-mark.svg",
+      "size": [
+        256,
+        256
+      ],
+      "kind": "icon"
+    }
+  ]
+}
