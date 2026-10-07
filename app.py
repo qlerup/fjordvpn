@@ -89,8 +89,8 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
             with auth_lock:
                 recent = [t for t in login_failures.get(address,[]) if time.time()-t<300]
                 login_failures[address] = recent
-                if len(recent)>=8:
-                    return render_template('login.html',error='For mange forsøg. Vent fem minutter.'),429
+                if len(recent)>=5:
+                    return render_template('login.html',error='For mange mislykkede forsøg. Vent fem minutter.'),429
                 user=None
                 if hub.enabled:
                     try:
