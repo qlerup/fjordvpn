@@ -61,6 +61,19 @@ def test_auth_csrf_and_host(app):
     assert 'legacy' not in app.extensions
 
 
+def test_login_locks_after_five_failed_attempts(app):
+    c=app.test_client()
+    c.get('/login')
+    with c.session_transaction() as session:
+        csrf=session['csrf']
+    for _ in range(5):
+        response=c.post('/login',data={'username':'admin','password':'wrong','csrf':csrf})
+        assert response.status_code==200
+    response=c.post('/login',data={'username':'admin','password':'still-wrong','csrf':csrf})
+    assert response.status_code==429
+    assert 'For mange mislykkede forsøg' in response.get_data(as_text=True)
+
+
 def test_empty_host_setting_keeps_healthcheck_and_lan_access(tmp_path,monkeypatch):
     monkeypatch.setenv('UI_ALLOWED_HOSTS','')
     app=create_app(tmp_path,testing=True,runtime_factory=FakeRuntime)
