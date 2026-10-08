@@ -64,6 +64,15 @@ with tempfile.TemporaryDirectory() as data:
         assert len(app.extensions['store'].all())==2
         # Cloudflare ingress: create two destinations, reject bad targets,
         # upload synthetic credentials without starting an external connection.
+        assert page.locator('#gateway-section').is_hidden()
+        page.locator('.sidebar a[href="#gateway-section"]').click()
+        page.locator('#gateway-section').wait_for(state='visible')
+        assert page.locator('#connections').is_hidden()
+        assert page.locator('.sidebar a[href="#gateway-section"]').get_attribute('aria-current')=='page'
+        page.go_back()
+        page.locator('#connections').wait_for(state='visible')
+        page.go_forward()
+        page.locator('#gateway-section').wait_for(state='visible')
         page.locator('#route-new').click()
         page.locator('#route-hostname').fill('fjordlens.gleruphub.dk')
         page.locator('#route-host').fill('8.8.8.8')
@@ -110,6 +119,9 @@ with tempfile.TemporaryDirectory() as data:
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         page.screenshot(path=str(root/'test-results/mobile-route.png'),full_page=True)
         page.keyboard.press('Escape')
+        page.locator('.mobile-sections a[href="#connections"]').click()
+        page.locator('#connections').wait_for(state='visible')
+        assert page.locator('#gateway-section').is_hidden()
         page.locator('#mobile-help').click()
         page.locator('#help-dialog').wait_for(state='visible')
         page.keyboard.press('Escape')
