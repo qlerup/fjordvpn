@@ -44,6 +44,11 @@ ikke Proxmox-konfigurationen og genstarter ikke andre servere.
 
 ## Selvstændig Docker-installation
 
+Land og flag følger Protons offentliggjorte [geofeed](https://ip.me/static/geofeeds/geofeed-mm.csv)
+for den aktive offentlige IP. Det er VPN-placeringen og ikke en påstand om
+serverens fysiske placering. Listen caches i seks timer; hvis IP'en ikke kan
+identificeres, vises landet som ukendt frem for et gæt fra en anden GeoIP-database.
+
 ```sh
 git clone https://github.com/qlerup/fjordvpn.git
 cd fjordvpn

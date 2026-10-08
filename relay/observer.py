@@ -1,3 +1,5 @@
+import csv
+import io
 import ipaddress
 import json
 import os
@@ -27,28 +29,54 @@ def stop(process):
 
 
 class PublicLocation:
-    """Read Gluetun's own location result, cached for the current egress IP."""
+    """Match the active IP against Proton's published geofeed, not generic GeoIP."""
+    URL = 'https://ip.me/static/geofeeds/geofeed-mm.csv'
+
     def __init__(self):
         self.address = None
         self.country = ''
         self.retry_at = 0
+        self.expires_at = 0
+        self.networks = []
 
     def get(self, address):
-        if address != self.address:
-            self.address, self.country, self.retry_at = address, '', 0
-        if self.country or time.monotonic() < self.retry_at:
-            return self.country
-        self.retry_at = time.monotonic() + 30
         try:
-            with urllib.request.urlopen('http://127.0.0.1:8000/v1/publicip/ip', timeout=2) as response:
-                data = json.loads(response.read(8192))
-            if not isinstance(data, dict):
+            ip = ipaddress.ip_address(address)
+            if not ip.is_global:
                 return ''
-            country = data.get('country', '')
-            if data.get('public_ip') == address and isinstance(country, str) and 0 < len(country) <= 80:
-                self.country = country
-        except (OSError, ValueError, TypeError):
-            pass  # Location is optional; failure never changes tunnel readiness.
+        except ValueError:
+            return ''
+        now = time.monotonic()
+        if address == self.address and self.country and now < self.expires_at:
+            return self.country
+        self.address, self.country = address, ''
+        if now >= self.expires_at:
+            if now < self.retry_at:
+                return ''
+            self.retry_at = now + 60
+            try:
+                with urllib.request.urlopen(self.URL, timeout=2) as response:
+                    raw = response.read(262145)
+                if len(raw) > 262144:
+                    return ''
+                networks = []
+                for row in csv.reader(io.StringIO(raw.decode('utf-8-sig'))):
+                    if len(row) < 2 or row[0].lstrip().startswith('#'):
+                        continue
+                    country = row[1].strip().upper()
+                    if len(country) != 2 or not country.isascii() or not country.isalpha():
+                        continue
+                    try:
+                        networks.append((ipaddress.ip_network(row[0].strip()), country))
+                    except ValueError:
+                        continue
+                if not networks:
+                    return ''
+                self.networks = sorted(networks, key=lambda pair: pair[0].prefixlen, reverse=True)
+                self.expires_at = now + 21600
+            except (OSError, ValueError, TypeError, csv.Error):
+                return ''  # Country failure must never change VPN readiness.
+        self.country = next((country for network, country in self.networks if ip in network), '')
         return self.country
 
 

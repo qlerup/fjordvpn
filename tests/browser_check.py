@@ -61,10 +61,11 @@ with tempfile.TemporaryDirectory() as data:
         page.locator('#save-button').click()
         page.get_by_role('heading',name='Minecraft',exact=True).wait_for()
         assert len(app.extensions['store'].all())==2
-        app.extensions['runtime'].status=lambda profile:dict(profile,state='online',public_ip='203.0.113.5',public_port=45001,country='France',message='VPN klar')
+        app.extensions['runtime'].status=lambda profile:dict(profile,state='online',public_ip='203.0.113.5',public_port=45001,country='PS',message='VPN klar')
         page.reload()
-        page.get_by_text('IP-land: Frankrig',exact=True).first.wait_for()
+        page.get_by_text('VPN-land: Palæstina',exact=True).first.wait_for()
         assert page.locator('.country-location img').first.evaluate('(img)=>img.complete && img.naturalWidth>0')
+        assert page.locator('.country-location img').first.get_attribute('src')=='/static/flags/ps.svg'
         page.screenshot(path=str(root/'test-results/desktop-profiles.png'),full_page=True)
         page.set_viewport_size({'width':390,'height':844})
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
