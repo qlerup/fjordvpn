@@ -8,3 +8,5 @@
 
 .brand-icon{width:40px;height:40px;flex-shrink:0}
 @media(max-width:700px){.sidebar .brand-icon{width:34px;height:34px}}
+
+.country-location{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin:8px 0}.country-location img{border-radius:2px;box-shadow:0 0 0 1px #ffffff26;object-fit:cover}

@@ -1,4 +1,3 @@
-function countryName(name){return ({France:'Frankrig',Denmark:'Danmark',Sweden:'Sverige',Norway:'Norge',Germany:'Tyskland',Netherlands:'Nederlandene',Switzerland:'Schweiz',Finland:'Finland',Ukraine:'Ukraine','United Kingdom':'Storbritannien','United States':'USA'})[name]||name;}
 const $ = (selector) => document.querySelector(selector);
 const csrf = $('meta[name="csrf-token"]').content;
 let profiles = [], editing = null, toastTimer;
@@ -11,7 +10,7 @@ function card(p,legacy=false){
  title.append(el('span','vpn-icon',legacy?'◈':'⇄')); const names=el('div'); names.append(el('h3','',p.name),el('p','card-subtitle',legacy?p.location:'Proton VPN · WireGuard')); title.append(names);
  top.append(title,el('span','badge '+p.state,states[p.state]||'Ukendt')); main.append(top);
  const row=el('div','address-row'),address=el('div'); address.append(el('p','label','Offentlig IP og port')); const value=p.public_ip?(p.public_ip+(p.public_port?':'+p.public_port:'')):'Afventer forbindelse'; address.append(el('p','address',value));row.append(address);
- if(p.public_ip){const copy=el('button','copy-button','Kopiér');copy.type='button';copy.addEventListener('click',()=>copyText(value));row.append(copy);} main.append(row); if(p.public_ip&&!legacy) main.append(el('p','small muted','Land: '+(countryName(p.country)||'Afventer land')));
+ if(p.public_ip){const copy=el('button','copy-button','Kopiér');copy.type='button';copy.addEventListener('click',()=>copyText(value));row.append(copy);} main.append(row); if(p.public_ip&&!legacy) main.append(countryInfo(p.country));
  const targetRow=el('div','target-row'),target=el('div');target.append(el('p','label','Lokalt mål'),el('p','target',p.host&&p.port?`${p.host}:${p.port}`:'Intet mål valgt'));targetRow.append(target,el('span','small muted',p.relay_active?'TCP aktiv':legacy?'Eksisterende opsætning':p.relay_enabled?'TCP afventer':'TCP slået fra'));main.append(targetRow);
  const footer=el('div','card-footer');footer.append(el('p','card-message',p.message||''));const actions=el('div','card-actions');
  if(legacy){if(p.url){const link=el('a','','Åbn ↗');link.href=p.url;link.target='_blank';link.rel='noopener';actions.append(link);}}
