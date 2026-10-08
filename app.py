@@ -63,8 +63,15 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
             except HubError as exc:
                 if exc.status!=503:
                     session.clear()
+                    if exc.status == 401:
+                        session['hub_access_revoked'] = True
+                        if not request.path.startswith('/api/'):
+                            return redirect('/login?access_removed=1')
+                        return jsonify(error_code='access_revoked', authenticated=False, error=str(exc)),401
                 return jsonify(error=str(exc)),exc.status
         if not public and not session.get('authenticated'):
+            if request.endpoint == 'api_hub_access':
+                return jsonify(authenticated=False, error_code='access_revoked' if session.get('hub_access_revoked') else None), (401 if session.get('hub_access_revoked') else 200)
             if request.path.startswith('/api/'):
                 return jsonify(error='Log ind for at fortsætte.'),401
             return redirect(url_for('login'))
@@ -75,6 +82,10 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
             'X-Frame-Options':'DENY','Referrer-Policy':'same-origin',
             'Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"})
         return response
+
+    @app.get('/api/auth/access')
+    def api_hub_access():
+        return jsonify(ok=True, authenticated=bool(session.get('authenticated')))
 
     @app.errorhandler(413)
     def too_large(_):

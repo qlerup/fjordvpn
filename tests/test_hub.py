@@ -33,9 +33,12 @@ def test_sso_login_and_revoked_access(managed):
         assert s['hub_uid']==7
         assert 'single-use-test' not in json.dumps(dict(s))
     assert client.get('/api/profiles').status_code==200
+    assert client.get('/api/auth/access').json['authenticated'] is True
     hub.expires=0
     hub.call=Mock(return_value={'ok':True,'items':[]})
-    assert client.get('/api/profiles').status_code==401
+    revoked=client.get('/api/profiles')
+    assert revoked.status_code==401 and revoked.json['error_code']=='access_revoked'
+    assert client.get('/api/auth/access').json['error_code']=='access_revoked'
     assert client.get('/api/profiles').status_code==401
 
 
