@@ -3,7 +3,7 @@ RUN apk add --no-cache socat
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py configuration.py hub.py runtime.py store.py ./
+COPY app.py configuration.py gateway.py hub.py runtime.py store.py ./
 COPY relay ./relay
 COPY templates ./templates
 COPY static ./static

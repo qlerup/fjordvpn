@@ -12,6 +12,7 @@ from werkzeug.serving import make_server
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from app import create_app
 from test_app import FakeRuntime, config
+from test_gateway import credentials
 
 root=Path(__file__).resolve().parents[1]
 (root/'test-results').mkdir(exist_ok=True)
@@ -61,10 +62,54 @@ with tempfile.TemporaryDirectory() as data:
         page.locator('#save-button').click()
         page.get_by_role('heading',name='Minecraft',exact=True).wait_for()
         assert len(app.extensions['store'].all())==2
+        # Cloudflare ingress: create two destinations, reject bad targets,
+        # upload synthetic credentials without starting an external connection.
+        page.locator('#route-new').click()
+        page.locator('#route-hostname').fill('fjordlens.gleruphub.dk')
+        page.locator('#route-host').fill('8.8.8.8')
+        page.locator('#route-port').fill('3000')
+        page.locator('#route-save').click()
+        page.locator('#route-form-error').wait_for(state='visible')
+        page.locator('#route-host').fill('192.168.1.50')
+        page.locator('#route-save').click()
+        page.locator('#route-dialog').wait_for(state='hidden')
+        page.locator('#gateway-settings').click()
+        page.locator('#gateway-file').set_input_files({'name':'tunnel.json','mimeType':'application/json','buffer':json.dumps(credentials()).encode()})
+        page.locator('#gateway-save').click()
+        page.locator('#gateway-dialog').wait_for(state='hidden')
+        page.locator('#gateway-dns').wait_for(state='visible')
+        assert credentials()['TunnelSecret'] not in page.content()
+        page.locator('#route-new').click()
+        page.locator('#route-hostname').fill('fjordbudget.gleruphub.dk')
+        page.locator('#route-host').fill('192.168.1.60')
+        page.locator('#route-port').fill('8080')
+        page.locator('#route-save').click()
+        page.locator('#route-dialog').wait_for(state='hidden')
+        assert page.locator('.gateway-route').count()==2
+        page.locator('#gateway-power').click()
+        page.get_by_role('button',name='Stop tunnel',exact=True).wait_for()
+        assert app.extensions['store'].root.joinpath('gateway.json').exists()
+        page.locator('#gateway-power').click()
+        page.get_by_role('button',name='Start tunnel',exact=True).wait_for()
+        page.get_by_role('button',name='Redigér fjordlens.gleruphub.dk',exact=True).click()
+        page.locator('#route-scheme').select_option('https')
+        page.locator('#route-tls').fill('internal.gleruphub.dk')
+        page.locator('#route-port').fill('443')
+        page.locator('#route-save').click()
+        page.locator('#route-dialog').wait_for(state='hidden')
+        assert 'https://192.168.1.50:443' in page.locator('#gateway-routes').inner_text()
         page.screenshot(path=str(root/'test-results/desktop-profiles.png'),full_page=True)
         page.set_viewport_size({'width':390,'height':844})
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         page.screenshot(path=str(root/'test-results/mobile-profiles.png'),full_page=True)
+        page.get_by_role('button',name='Fjern fjordbudget.gleruphub.dk',exact=True).click()
+        page.locator('#route-delete-confirm').click()
+        page.locator('#route-delete-dialog').wait_for(state='hidden')
+        assert page.locator('.gateway-route').count()==1
+        page.locator('#route-new').click()
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        page.screenshot(path=str(root/'test-results/mobile-route.png'),full_page=True)
+        page.keyboard.press('Escape')
         page.locator('#mobile-help').click()
         page.locator('#help-dialog').wait_for(state='visible')
         page.keyboard.press('Escape')

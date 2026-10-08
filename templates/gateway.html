@@ -1,0 +1,35 @@
+<section id="gateway-section" aria-labelledby="gateway-heading">
+  <div class="section-heading"><div><h2 id="gateway-heading">Dine subdomæner</h2><p class="muted small">Én Cloudflare Tunnel. Flere lokale tjenester.</p></div><button class="secondary" id="gateway-settings">Opsæt tunnel</button></div>
+  <div class="vpn-card"><div class="card-main">
+    <div class="card-top"><h3>Cloudflare Tunnel</h3><span class="badge" id="gateway-state">Henter…</span></div>
+    <p class="muted gateway-message" id="gateway-message" role="status"></p>
+    <p class="small muted">Webadgang via Cloudflare fungerer uafhængigt af dine Proton-forbindelser.</p>
+    <div class="notice" id="gateway-dns" hidden><strong>DNS i Cloudflare</strong><p>Opret en proxied CNAME for hvert subdomæne med dette mål:</p><code id="gateway-dns-target"></code><p>Reglerne her ændrer ikke dine DNS-poster. Beskyt private apps med Cloudflare Access eller appens eget login.</p></div>
+    <div id="gateway-error" class="error" role="alert" hidden></div>
+    <div id="gateway-routes" class="gateway-routes"></div>
+    <p id="gateway-empty" class="muted gateway-message">Tilføj et subdomæne og vælg, hvilken lokal IP og port det skal åbne.</p>
+  </div><div class="card-footer"><button class="secondary" id="route-new">Tilføj subdomæne</button><button class="secondary" id="gateway-power" disabled>Start tunnel</button></div></div>
+</section>
+<dialog id="gateway-dialog"><form id="gateway-form">
+  <div class="dialog-heading"><h2>Opsæt Cloudflare Tunnel</h2><button type="button" class="icon-button close-dialog" aria-label="Luk">×</button></div>
+  <div class="dialog-body"><p class="muted">Indlæs legitimationsfilen til en dedikeret, lokalt administreret tunnel. Den gemmes på serveren og vises aldrig igen.</p>
+    <ol class="setup-steps"><li>Kør <code>cloudflared tunnel login</code> på din computer.</li><li>Kør <code>cloudflared tunnel create fjordvpn</code>.</li><li>Vælg den nye <code>&lt;tunnel-id&gt;.json</code> i din <code>.cloudflared</code>-mappe nedenfor.</li><li>Tilføj subdomæner her, opret de viste CNAME-poster i Cloudflare, og start tunnelen.</li></ol>
+    <p class="small muted">Brug tunnelens JSON-fil, ikke cert.pem, en API-nøgle eller et dashboard-token. Brug en ny tunnel, hvis en eksisterende tunnel allerede betjener andre apps.</p>
+    <label class="upload-box">Tunnelens JSON-fil<input id="gateway-file" type="file" accept=".json,application/json" required></label>
+    <p class="small muted">HTTPS til dit subdomæne håndteres af Cloudflare. Du behøver hverken en fast Proton-IP eller en åben port på din router.</p>
+    <div class="error" id="gateway-form-error" role="alert" hidden></div>
+  </div><div class="dialog-footer"><button type="button" class="secondary close-dialog">Annuller</button><button class="primary" id="gateway-save">Gem tunnel</button></div>
+</form></dialog>
+<dialog id="route-dialog"><form id="route-form">
+  <div class="dialog-heading"><h2 id="route-title">Tilføj subdomæne</h2><button type="button" class="icon-button close-dialog" aria-label="Luk">×</button></div>
+  <div class="dialog-body">
+    <label>Subdomæne<input id="route-hostname" placeholder="fjordlens.gleruphub.dk" maxlength="253" required></label>
+    <div class="field-row"><label>Lokal IP<input id="route-host" placeholder="192.168.1.50" required></label><label>Port<input id="route-port" type="number" min="1" max="65535" placeholder="3000" required></label></div>
+    <label>Forbindelse til den lokale tjeneste<select id="route-scheme"><option value="http">HTTP</option><option value="https">HTTPS</option></select></label>
+    <label id="route-tls-field" hidden>Navn i tjenestens HTTPS-certifikat (valgfrit)<input id="route-tls" placeholder="intern.gleruphub.dk" maxlength="253"></label>
+    <p class="small muted">Vælg den protokol din lokale tjeneste bruger. HTTPS-certifikater kontrolleres; et selvsigneret certifikat accepteres ikke automatisk.</p>
+    <label class="check"><input id="route-enabled" type="checkbox" checked> Aktivér denne regel</label>
+    <div class="error" id="route-form-error" role="alert" hidden></div>
+  </div><div class="dialog-footer"><button type="button" class="secondary close-dialog">Annuller</button><button class="primary" id="route-save">Gem regel</button></div>
+</form></dialog>
+<dialog id="route-delete-dialog"><form id="route-delete-form"><div class="dialog-heading"><h2>Fjern subdomæne?</h2></div><div class="dialog-body"><p id="route-delete-name"></p><p class="muted">Trafikken til denne tjeneste stopper, når ændringen anvendes. DNS-posten i Cloudflare skal fjernes separat.</p><div class="error" id="route-delete-error" role="alert" hidden></div></div><div class="dialog-footer"><button type="button" class="secondary close-dialog">Annuller</button><button class="secondary danger" id="route-delete-confirm">Fjern regel</button></div></form></dialog>
