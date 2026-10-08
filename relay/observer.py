@@ -26,12 +26,39 @@ def stop(process):
             process.wait()
 
 
+class PublicLocation:
+    """Read Gluetun's own location result, cached for the current egress IP."""
+    def __init__(self):
+        self.address = None
+        self.country = ''
+        self.retry_at = 0
+
+    def get(self, address):
+        if address != self.address:
+            self.address, self.country, self.retry_at = address, '', 0
+        if self.country or time.monotonic() < self.retry_at:
+            return self.country
+        self.retry_at = time.monotonic() + 30
+        try:
+            with urllib.request.urlopen('http://127.0.0.1:8000/v1/publicip/ip', timeout=2) as response:
+                data = json.loads(response.read(8192))
+            if not isinstance(data, dict):
+                return ''
+            country = data.get('country', '')
+            if data.get('public_ip') == address and isinstance(country, str) and 0 < len(country) <= 80:
+                self.country = country
+        except (OSError, ValueError, TypeError):
+            pass  # Location is optional; failure never changes tunnel readiness.
+        return self.country
+
+
 def observe():
     process, current = None, None
+    location = PublicLocation()
     networks = [ipaddress.IPv4Network(n) for n in os.environ['LAN_SUBNETS'].split(',')]
     try:
         while not shutdown.is_set():
-            state = dict(healthy=False, public_ip='', public_port='', relay_active=False,
+            state = dict(healthy=False, public_ip='', public_port='', country='', relay_active=False,
                          checked_at=time.time(), message='Venter på VPN-forbindelse', revision='')
             wanted = None
             try:
@@ -44,6 +71,7 @@ def observe():
                     address = ipaddress.IPv4Address(Path('/vpn-state/ip').read_text().strip())
                     if address.is_global:
                         state['public_ip'] = str(address)
+                        state['country'] = location.get(str(address))
                     port = int(Path('/vpn-state/forwarded_port').read_text().strip())
                     if 1 <= port <= 65535:
                         state['public_port'] = port

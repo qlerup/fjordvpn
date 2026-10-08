@@ -12,7 +12,7 @@ def profiles(root):
         item = {key: p[key] for key in fields}
         try:
             status = json.loads((path.parent/'observed/status.json').read_text())
-            item['status'] = {key: status.get(key) for key in ('healthy','checked_at','public_ip','public_port')}
+            item['status'] = {key: status.get(key) for key in ('healthy','checked_at','public_ip','public_port','country')}
             item['status']['healthy'] = bool(status.get('healthy') and status.get('revision') == p.get('revision'))
         except (OSError, ValueError):
             item['status'] = {'healthy': False}

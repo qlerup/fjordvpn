@@ -113,7 +113,7 @@ class Runtime:
 
     def status(self, p):
         result = {k:v for k,v in p.items() if k != 'fingerprint'}
-        result.update(kind='managed', state='off', public_ip='', public_port='', relay_active=False,
+        result.update(kind='managed', state='off', public_ip='', public_port='', country='', relay_active=False,
                       checked_at=time.time(), message='Slukket')
         if not p['desired']:
             try:
@@ -130,6 +130,7 @@ class Runtime:
                     obs = json.loads((self.store.directory(p['id'])/'observed/status.json').read_text())
                     if 0 <= time.time() - obs['checked_at'] < 20:
                         result.update({k:obs[k] for k in ('public_ip','public_port','relay_active','message','checked_at')})
+                        result['country'] = obs.get('country', '')
                         result['state'] = 'online' if obs['healthy'] else 'connecting'
                         if obs.get('revision') != p['revision']:
                             result.update(relay_active=False, message='Anvender videresendelse…')

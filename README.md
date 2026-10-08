@@ -32,7 +32,11 @@ Eksisterende VPN-installationer på andre servere berøres ikke.
 - Proton VPN-konfiguration med WireGuard, IPv4-server og NAT-PMP/port forwarding.
 - Et privat IPv4-lokalnet, som ikke overlapper Protons `10.2.0.0/24`.
 
-I Proxmox LXC skal TUN være givet videre til den LXC, som kører Docker.
+FjordHub kontrollerer TUN-adgang i Docker under installation af FjordVPN. Med
+FjordHubs Proxmox-forbindelse opsættes manglende adgang automatisk for FjordHubs
+egen LXC og bevares efter genstart. Den aktive LXC behøver ikke genstartes.
+
+Ved installation uden FjordHub skal TUN være givet videre til den LXC, som kører Docker.
 På Proxmox-versioner med device passthrough kan en **ledig** `devN`-plads bruges,
 fx `pct set <CTID> --dev0 /dev/net/tun`, hvis `dev0` ikke allerede er optaget.
 Genstart derefter den berørte LXC på et passende tidspunkt. FjordVPN ændrer
