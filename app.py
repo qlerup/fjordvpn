@@ -13,7 +13,6 @@ from hub import Hub, HubError
 from configuration import parse_networks
 from runtime import Runtime
 from store import Store, atomic
-from gateway import GatewayStore
 
 
 def create_app(root=None, testing=False, runtime_factory=Runtime):
@@ -31,7 +30,7 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
     app = Flask(__name__)
     # Hub SSO may arrive from another site; Lax carries the session through its
     # top-level GET redirect. POST actions still require CSRF verification.
-    app.config.update(SECRET_KEY=auth['secret'], MAX_CONTENT_LENGTH=131072,
+    app.config.update(SECRET_KEY=auth['secret'], MAX_CONTENT_LENGTH=32768,
         SESSION_COOKIE_NAME='fjordvpn_session',
         SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE='Lax',
         PERMANENT_SESSION_LIFETIME=28800, TESTING=testing)
@@ -90,7 +89,7 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
 
     @app.errorhandler(413)
     def too_large(_):
-        return jsonify(error='Anmodningen er for stor. VPN-filer må højst være 16 KB; samlede indstillinger højst 128 KB.'),413
+        return jsonify(error='Konfigurationsfilen er for stor. Maksimum er 16 KB.'),413
 
     @app.route('/login', methods=['GET','POST'])
     def login():
@@ -156,20 +155,6 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
     def profiles():
         with store.lock:
             return jsonify(profiles=[runtime.status(p) for p in store.all()])
-
-    @app.get('/api/gateway')
-    def gateway_status():
-        with store.lock:
-            gateway = getattr(runtime, 'gateway', None)
-            return jsonify(gateway.status() if gateway else dict(GatewayStore(store).public(),
-                state='off', message='Runtime er ikke startet.'))
-
-    @app.post('/api/gateway')
-    def gateway_settings():
-        try:
-            return jsonify(GatewayStore(store).save(request.get_json(silent=True)))
-        except ValueError as exc:
-            return jsonify(error=str(exc)), 400
 
     @app.post('/api/profiles')
     def create():

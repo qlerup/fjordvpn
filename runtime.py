@@ -5,7 +5,6 @@ from pathlib import Path
 import time
 
 import docker
-from gateway import GatewayRuntime
 
 GLUETUN = 'qmcgaw/gluetun@sha256:fa19cc76b2af13d57a8d3dc3066f2ada061b1c761b8aecf989b3877c0486e027'
 LABEL = 'dk.fjordvpn.profile'
@@ -20,7 +19,6 @@ class Runtime:
         self.project = ''
         self.relay_image = 'fjordvpn-relay:1'
         self.host_root = self.store.root
-        self.gateway = GatewayRuntime(self)
         if os.environ.get('FJORDVPN_CONTAINER') == '1':
             parent=self.client.containers.get(os.environ['HOSTNAME'])
             self.project=parent.labels.get('com.docker.compose.project','')
@@ -153,7 +151,6 @@ class Runtime:
                         self.errors[p['id']] = 'TUN mangler på Docker-værten. Giv /dev/net/tun videre til din LXC, og prøv igen.'
                     else:
                         self.errors[p['id']] = 'Kunne ikke ændre VPN-driften. Kontrollér Docker og prøv igen.'
-            self.gateway.tick()
 
     def shutdown(self):
         """Compose stop leaves persistent profiles intact, but stops their runtime."""
@@ -172,4 +169,3 @@ class Runtime:
         with self.store.lock:
             with ThreadPoolExecutor(max_workers=4) as pool:
                 list(pool.map(stop_profile,self.store.all()))
-            self.gateway.shutdown()

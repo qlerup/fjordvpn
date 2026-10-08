@@ -76,52 +76,6 @@ Brug ikke samme Proton-nøgle i to aktive installationer. Appen afviser dublette
 blandt sine egne profiler, men har ingen adgang til andre VPN-servere. Brug
 separate konfigurationer, mens gamle installationer stadig kører.
 
-## Subdomæner med Cloudflare Tunnel
-
-Sektionen **Dine subdomæner** fordeler webtrafik til flere lokale IP-adresser
-og porte. Eksempelvis `fjordlens.gleruphub.dk → http://192.168.1.50:3000` og
-`fjordbudget.gleruphub.dk → http://192.168.1.60:8080`. Dette bruger en separat
-Cloudflare Tunnel, uafhængigt af Proton. Ingen Proton-profil er nødvendig,
-og funktionen ændrer ikke lokalservernes udgående trafik.
-
-1. Tilføj dit domæne til Cloudflare. Installér `cloudflared` på din computer,
-   kør `cloudflared tunnel login`, og opret en **dedikeret, lokalt administreret**
-   tunnel med `cloudflared tunnel create fjordvpn`.
-2. Vælg **Opsæt tunnel** i FjordVPN og indlæs den genererede
-   `<tunnel-id>.json` fra `.cloudflared`-mappen. Brug ikke `cert.pem` eller
-   et token fra en fjernadministreret dashboard-tunnel.
-3. Vælg **Tilføj subdomæne**, og indtast hostname, lokal IPv4, port og lokal
-   protokol (HTTP/HTTPS). Destinationen skal ligge i `LAN_SUBNETS` og kunne nås
-   fra Docker-værten. Ved HTTPS skal tjenesten have et gyldigt, betroet certifikat;
-   angiv eventuelt certifikatets domænenavn i det separate felt.
-4. Opret en **proxied CNAME** i samme Cloudflare-konto for hvert subdomæne.
-   Målet `<tunnel-id>.cfargotunnel.com` vises i FjordVPN. Alternativt kan du køre
-   `cloudflared tunnel route dns fjordvpn fjordlens.gleruphub.dk` på computeren,
-   hvor du loggede ind. FjordVPN ændrer ikke DNS-poster automatisk.
-5. Start tunnelen i appen. Besøg hvert subdomæne for at kontrollere hele forbindelsen.
-
-Cloudflare leverer offentlig HTTPS. Beskyt private tjenester med Cloudflare
-Access eller tjenestens eget login, før du aktiverer adgang. Funktionen dækker
-HTTP(S), inklusive WebSockets; den er ikke en generel TCP/UDP-gateway.
-Cloudflares plan- og uploadgrænser gælder fortsat.
-
-Regler og legitimationsoplysninger gemmes i `DATA_DIR/gateway.json` med samme
-beskyttelse som VPN-profiler. Hemmeligheden returneres aldrig i API-svar.
-Ukendte værtsnavne får 404. Gemte ændringer anvendes ved at genoprette kun
-FjordVPNs egen Cloudflare-container; igangværende forbindelser kan derfor blive
-afbrudt kortvarigt. Tilstanden **Container kører** bekræfter Docker-processen,
-ikke DNS, Cloudflare-forbindelsen eller den lokale tjenestes tilgængelighed.
-
-Første start downloader det versionsfastlåste `cloudflare/cloudflared:2026.9.3`.
-Der offentliggøres ingen ekstra porte på Docker-værten. Stop af tunnelen bevarer
-reglerne; sletning af en regel fjerner ikke DNS-posten. I Compose stoppes
-Cloudflare-containeren sammen med appen og genstartes efter den gemte tilstand.
-Ingen eksisterende profiler skal migreres. Ved rollback skal tunnelen stoppes
-i UI, før en ældre FjordVPN-version installeres.
-
-Efter opdatering af kildekoden bygges appen med `docker compose up -d --build`.
-Læs også [Cloudflares vejledning til lokale tunneler](https://developers.cloudflare.com/tunnel/features/locally-managed-tunnels/create-local-tunnel/).
-
 ## Data, stop og afinstallation
 
 `DATA_DIR` indeholder private nøgler, profiler og loginoplysninger. Beskyt backup

@@ -2,7 +2,6 @@
 !requirements.txt
 !app.py
 !configuration.py
-!gateway.py
 !hub.py
 !runtime.py
 !store.py
