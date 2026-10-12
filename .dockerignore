@@ -5,6 +5,7 @@
 !hub.py
 !runtime.py
 !store.py
+!stream_sync.py
 !seedbox_export.py
 !relay/
 !relay/observer.py
