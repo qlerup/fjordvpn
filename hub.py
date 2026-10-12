@@ -63,8 +63,11 @@ class Hub:
                     return self.administrator(user)
         raise HubError('Din adgang til FjordVPN er fjernet i FjordHub.',401)
 
-    def authenticate(self, username, password):
-        user=self.administrator(self.call('/api/hub/apps/authenticate',{'username':username,'password':password}).get('user'))
+    def authenticate(self, username, password, first_login_email=""):
+        user=self.call('/api/hub/apps/authenticate',{'username':username,'password':password,'first_login_email':first_login_email}).get('user')
+        if isinstance(user, dict) and user.get('email_required'):
+            return user
+        user=self.administrator(user)
         return self.current(user['id'],force=True)
 
     def sso(self, token):

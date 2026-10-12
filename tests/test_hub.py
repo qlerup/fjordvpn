@@ -79,3 +79,19 @@ def test_managed_password_login(managed):
     with c.session_transaction() as s:csrf=s['csrf']
     assert c.post('/login',data={'username':'test-admin','password':'test','csrf':csrf}).status_code==302
     assert c.get('/api/profiles').status_code==200
+
+
+def test_first_login_collects_email_without_starting_session(managed):
+    hub = managed.extensions['hub']
+    hub.call = Mock(return_value={'ok':True,'user':dict(ADMIN, email_required=True)})
+    c = managed.test_client()
+    c.get('/login')
+    with c.session_transaction() as s:
+        csrf = s['csrf']
+    result = c.post('/login', data={'username':'test-admin','password':'test','csrf':csrf})
+    assert result.status_code == 200
+    assert 'name="first_login_email"' in result.text
+    with c.session_transaction() as s:
+        assert not s.get('authenticated')
+    c.post('/login', data={'username':'test-admin','password':'test','csrf':csrf,'first_login_email':'me@example.com'})
+    assert hub.call.call_args.args[1]['first_login_email'] == 'me@example.com'
