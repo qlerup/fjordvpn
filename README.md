@@ -83,18 +83,20 @@ IP/port kan skifte hos Proton. HTTPS-certifikater håndteres fortsat af din gate
 
 ### Automatisk Cloudflare DNS og FjordFlix
 
-Åbn **Indstillinger** på din streaming-VPN, og slå **Hold DNS og streamport
-opdateret** til. Indtast videodomænet (uden protokol/port), Cloudflare Zone ID
+Åbn **Indstillinger** på din streaming-VPN, og slå **Hold dette domænes IP opdateret** til. Indtast videodomænet (uden protokol/port), Cloudflare Zone ID
 og et API-token med **Zone / DNS / Edit**, begrænset til den relevante zone.
 Zone ID findes på domænets oversigt i Cloudflare. Tokenet gemmes i en separat
 lokal fil med adgangsrettighed 0600 og returneres aldrig til browseren. Et tomt
 tokenfelt ved redigering beholder det gemte token.
 
-Forudsætninger: aktiv TCP-videresendelse til din HTTPS-gateway, præcis én
-eksisterende A-record for videodomænet og samme videodomæne opsat via
-FjordHubs streamguide. FjordFlix-containeren skal hedde `fjordflix` og være på
-samme Docker-vært. Automatikken er slået fra som standard; kun én profil kan
-styre FjordFlix ad gangen.
+DNS kræver præcis én eksisterende A-record for domænet. FjordFlix-valget
+kræver desuden aktiv TCP-videresendelse til din HTTPS-gateway og samme
+videodomæne opsat via FjordHubs streamguide. FjordFlix-containeren skal hedde `fjordflix` og være på
+samme Docker-vært. Automatikken er slået fra som standard. Hver VPN kan styre sit eget domæne.
+DNS alene kræver hverken TCP-relay, en HTTPS-gateway eller FjordFlix.
+Det separate valg **Opdater også FjordFlix' streamport** kan aktiveres på én
+VPN ad gangen. To VPN’er kan ikke styre samme DNS-navn. Eksisterende
+streamopsætninger beholder FjordFlix-valget efter opdatering.
 
 FjordVPN kontrollerer cirka hvert 30. sekund, retter IP-adressen i Cloudflare
 med DNS-only og tester den nye HTTPS-adresse med et engangssvar fra FjordFlix.

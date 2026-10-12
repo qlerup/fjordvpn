@@ -17,6 +17,9 @@ def settings(data, previous, token_exists):
         raise ValueError('Ugyldige streamindstillinger.')
     domain = str(value.get('domain', '')).strip().lower()
     zone = str(value.get('zone_id', '')).strip()
+    flix = value.get('fjordflix', previous.get('fjordflix', bool(previous.get('enabled'))))
+    if type(flix) is not bool:
+        raise ValueError('Ugyldigt valg af FjordFlix-synkronisering.')
     if value['enabled']:
         if not re.fullmatch(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}', domain) or len(domain) > 253:
             raise ValueError('Indtast videodomænet uden https, port eller sti.')
@@ -24,9 +27,9 @@ def settings(data, previous, token_exists):
             raise ValueError('Indtast Cloudflare Zone ID (32 tegn).')
         if not token_exists:
             raise ValueError('Tilføj et Cloudflare API-token med DNS Edit for zonen.')
-        if not data.get('relay_enabled'):
+        if flix and not data.get('relay_enabled'):
             raise ValueError('Aktivér TCP-videresendelse til HTTPS-gatewayen først.')
-    return dict(enabled=value['enabled'], domain=domain, zone_id=zone)
+    return dict(enabled=value['enabled'], domain=domain, zone_id=zone, fjordflix=flix)
 
 
 class StreamSync:
@@ -84,10 +87,13 @@ media.init(db)
         address = str(ipaddress.IPv4Address(observed['public_ip']))
         if not ipaddress.ip_address(address).is_global:
             raise ValueError('VPN har endnu ingen offentlig IPv4-adresse.')
+        token = (self.store.directory(profile['id']) / 'cloudflare-token').read_text().strip()
+        if not config.get('fjordflix', True):
+            self.dns(config, token, address)
+            return config['domain']
         port = int(observed['public_port'])
         if not 1 <= port <= 65535:
             raise ValueError('VPN har endnu ingen offentlig port.')
-        token = (self.store.directory(profile['id']) / 'cloudflare-token').read_text().strip()
         current = self.flix('status')
         host = config['domain'] + (f':{port}' if port != 443 else '')
         url = 'https://' + host
@@ -126,11 +132,12 @@ media.init(db)
             self.next_check[ident] = time.monotonic() + 30
             try:
                 observed = self.runtime.status(profile)
-                if observed['state'] != 'online' or not observed['relay_active']:
-                    self.statuses[ident] = {'ok': False, 'message': 'Afventer VPN og aktiv TCP-videresendelse.'}
+                flix = profile['stream_sync'].get('fjordflix', True)
+                if observed['state'] != 'online' or (flix and not observed['relay_active']):
+                    self.statuses[ident] = {'ok': False, 'message': 'Afventer VPN og aktiv TCP-videresendelse.' if flix else 'Afventer VPN.'}
                     continue
                 url = self.sync(profile, observed)
-                self.statuses[ident] = {'ok': True, 'message': 'DNS og streamadresse er ajour.', 'url': url}
+                self.statuses[ident] = {'ok': True, 'message': 'DNS og streamadresse er ajour.' if flix else 'Cloudflare DNS er ajour.', 'url': url}
             except ValueError as exc:
                 # Only our validation messages are safe to display; parser errors are generic.
                 message = str(exc) if not isinstance(exc, json.JSONDecodeError) else 'Ugyldigt svar fra forbindelsestesten.'

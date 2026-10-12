@@ -60,11 +60,15 @@ class Store:
         saved = bool(previous.get('id') and (self.directory(previous['id']) / 'cloudflare-token').exists())
         config = stream_settings(data, previous.get('stream_sync', {}), bool(token) or saved)
         if config.get('enabled'):
-            if not data.get('relay_enabled'):
+            if config.get('fjordflix', True) and not data.get('relay_enabled'):
                 raise ValueError('TCP-videresendelse skal være aktiv for automatisk streaming.')
             for other in self.all():
                 if other['id'] != previous.get('id') and other.get('stream_sync', {}).get('enabled'):
-                    raise ValueError('Kun én VPN kan styre FjordFlix-streamadressen. Slå automatik fra på den anden først.')
+                    other_config = other['stream_sync']
+                    if other_config['domain'] == config['domain']:
+                        raise ValueError('Domænet styres allerede af en anden VPN. Vælg et andet domæne.')
+                    if config.get('fjordflix', True) and other_config.get('fjordflix', True):
+                        raise ValueError('Kun én VPN kan styre FjordFlix-streamadressen. Slå FjordFlix-valget fra på den anden først.')
         return config, token
 
     def create(self, data, raw, reserved=()):

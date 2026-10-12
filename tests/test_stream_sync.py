@@ -14,7 +14,7 @@ from stream_sync import StreamSync
 
 def options():
     return dict(name='Video', host='192.168.1.110', port=443, relay_enabled=True,
-        stream_sync=dict(enabled=True, domain='media.example.com', zone_id='a'*32),
+        stream_sync=dict(enabled=True, fjordflix=True, domain='media.example.com', zone_id='a'*32),
         cloudflare_token='secret-token-for-test-only')
 
 
@@ -41,6 +41,34 @@ def test_requires_relay_and_valid_zone(app):
     bad = options(); bad['stream_sync']['zone_id'] = '../other-zone'
     assert upload(client, headers, **bad).status_code == 400
     assert app.extensions['store'].all() == []
+
+
+def test_multiple_dns_profiles_are_independent_without_flix_or_relay(app):
+    store = app.extensions['store']
+    profiles = []
+    for index, domain in enumerate(['vpn.example.com', 'game.example.com'], 1):
+        values = options()
+        values.update(relay_enabled=False, host='', port=None)
+        values['stream_sync'].update(domain=domain, fjordflix=False)
+        profiles.append(store.create(values, config(index)))
+    sync = StreamSync(store, Mock())
+    sync.dns = Mock(); sync.flix = Mock()
+    for profile, address in zip(profiles, ['1.1.1.1', '8.8.8.8']):
+        sync.sync(profile, dict(public_ip=address, public_port=''))
+    sync.flix.assert_not_called()
+    assert [(c.args[0]['domain'], c.args[2]) for c in sync.dns.call_args_list] == [
+        ('vpn.example.com', '1.1.1.1'), ('game.example.com', '8.8.8.8')]
+    with pytest.raises(ValueError, match='Domænet'):
+        store.create(values, config(3))
+
+
+def test_previous_stream_settings_keep_flix_mode(app):
+    store = app.extensions['store']
+    profile = store.create(options(), config())
+    del profile['stream_sync']['fjordflix']
+    store.save(profile)
+    values = options(); del values['stream_sync']['fjordflix']
+    assert store.edit(profile['id'], values)['stream_sync']['fjordflix'] is True
 
 
 def test_dns_only_updates_exact_a_record():

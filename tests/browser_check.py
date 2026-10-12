@@ -43,6 +43,7 @@ with tempfile.TemporaryDirectory() as data:
         assert app.extensions['store'].all()[0]['desired'] is False
         page.get_by_role('button',name='Indstillinger',exact=True).click()
         page.locator('#stream-sync-enabled').check()
+        page.locator('#stream-flix-enabled').check()
         page.locator('#stream-domain').fill('media.example.com')
         page.locator('#stream-zone').fill('a'*32)
         page.locator('#stream-token').fill('synthetic-cloudflare-token')
