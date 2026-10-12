@@ -10,3 +10,5 @@
 @media(max-width:700px){.sidebar .brand-icon{width:34px;height:34px}}
 
 .country-location{display:inline-flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin:8px 0}.country-location img{border-radius:2px;box-shadow:0 0 0 1px #ffffff26;object-fit:cover}
+
+#stream-key{width:100%;padding:11px 12px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;font:inherit;margin-top:7px}#stream-key:focus-visible{outline:2px solid var(--accent)}#cloudflare-key-list .target-row{gap:16px;padding:14px 0;border-bottom:1px solid var(--border)}#cloudflare-key-list .small{overflow-wrap:anywhere}#cloudflare-key-form{margin-top:24px}#cloudflare-mobile{display:none}@media(max-width:760px){#cloudflare-mobile{display:inline-block}}

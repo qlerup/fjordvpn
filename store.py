@@ -28,6 +28,59 @@ class Store:
         (self.root / 'profiles').mkdir(exist_ok=True, mode=0o700)
         self.networks = networks
         self.lock = threading.RLock()
+        (self.root / 'cloudflare-keys').mkdir(exist_ok=True, mode=0o700)
+        self.migrate_keys()
+
+    def key_path(self, ident):
+        if not isinstance(ident, str) or not re.fullmatch('[0-9a-f]{32}', ident):
+            raise ValueError('Vælg en gemt Cloudflare-nøgle.')
+        return self.root / 'cloudflare-keys' / (ident + '.json')
+
+    def key(self, ident):
+        try:
+            return json.loads(self.key_path(ident).read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            raise ValueError('Cloudflare-nøglen findes ikke.') from None
+
+    def keys(self):
+        with self.lock:
+            values = [json.loads(p.read_text(encoding='utf-8')) for p in (self.root/'cloudflare-keys').glob('*.json')]
+            return [{k:v for k,v in item.items() if k != 'token'} for item in sorted(values, key=lambda v:v['name'].lower())]
+
+    def save_key(self, data, ident=None):
+        with self.lock:
+            old = self.key(ident) if ident else {}
+            name = str(data.get('name', '')).strip()
+            zone = str(data.get('zone_id', '')).strip()
+            token = data.get('token') or old.get('token', '')
+            if not name or len(name)>64:
+                raise ValueError('Giv nøglen et navn på højst 64 tegn.')
+            if not re.fullmatch('[0-9a-f]{32}', zone):
+                raise ValueError('Indtast et gyldigt Cloudflare Zone ID.')
+            if not isinstance(token, str) or not re.fullmatch('[A-Za-z0-9_-]{20,256}', token):
+                raise ValueError('Indtast et gyldigt Cloudflare API-token.')
+            if old and old['zone_id'] != zone and any(p.get('stream_sync', {}).get('key_id') == ident for p in self.all()):
+                raise ValueError('Nøglen bruges af en VPN. Opret en ny nøgle for en anden zone.')
+            ident = ident or uuid.uuid4().hex
+            atomic(self.key_path(ident), json.dumps(dict(id=ident, name=name, zone_id=zone, token=token)))
+            return ident
+
+    def migrate_keys(self):
+        for profile in self.all():
+            config = profile.get('stream_sync', {})
+            path = self.directory(profile['id']) / 'cloudflare-token'
+            if path.exists() and not config.get('key_id') and config.get('zone_id'):
+                ident = profile['id']
+                atomic(self.key_path(ident), json.dumps(dict(id=ident, name=profile['name'],
+                    zone_id=config['zone_id'], token=path.read_text().strip())))
+                config['key_id'] = ident
+                self.save(profile)
+
+    def sync_token(self, profile):
+        ident = profile.get('stream_sync', {}).get('key_id')
+        if ident:
+            return self.key(ident)['token']
+        return (self.directory(profile['id'])/'cloudflare-token').read_text().strip()
 
     def directory(self, ident):
         if not re.fullmatch('[0-9a-f]{32}', ident):
@@ -54,11 +107,21 @@ class Store:
 
     def prepare_stream(self, data, previous=None):
         previous = previous or {}
+        data = dict(data)
+        supplied = data.get('stream_sync', previous.get('stream_sync', {}))
+        key_id = supplied.get('key_id') if isinstance(supplied, dict) else None
+        if isinstance(supplied, dict) and supplied.get('enabled') and 'key_id' in supplied and not key_id:
+            raise ValueError('Vælg en gemt nøgle fra Cloudflare-nøgler.')
+        if key_id:
+            key = self.key(key_id)
+            data['stream_sync'] = dict(supplied, zone_id=key['zone_id'])
         token = data.get('cloudflare_token', '')
         if not isinstance(token, str) or (token and not re.fullmatch(r'[A-Za-z0-9_-]{20,256}', token)):
             raise ValueError('Ugyldigt Cloudflare API-token.')
         saved = bool(previous.get('id') and (self.directory(previous['id']) / 'cloudflare-token').exists())
-        config = stream_settings(data, previous.get('stream_sync', {}), bool(token) or saved)
+        config = stream_settings(data, previous.get('stream_sync', {}), bool(key_id) or bool(token) or saved)
+        if key_id:
+            config = dict(config, key_id=key_id)
         if config.get('enabled'):
             if config.get('fjordflix', True) and not data.get('relay_enabled'):
                 raise ValueError('TCP-videresendelse skal være aktiv for automatisk streaming.')

@@ -83,11 +83,18 @@ IP/port kan skifte hos Proton. HTTPS-certifikater håndteres fortsat af din gate
 
 ### Automatisk Cloudflare DNS og FjordFlix
 
-Åbn **Indstillinger** på din streaming-VPN, og slå **Hold dette domænes IP opdateret** til. Indtast videodomænet (uden protokol/port), Cloudflare Zone ID
-og et API-token med **Zone / DNS / Edit**, begrænset til den relevante zone.
-Zone ID findes på domænets oversigt i Cloudflare. Tokenet gemmes i en separat
-lokal fil med adgangsrettighed 0600 og returneres aldrig til browseren. Et tomt
-tokenfelt ved redigering beholder det gemte token.
+Åbn menuen **Cloudflare-nøgler**, og gem et navn, Cloudflare Zone ID og et
+API-token med **Zone / DNS / Edit**, begrænset til den relevante zone. Zone ID
+findes på domænets oversigt i Cloudflare. Gemte tokens returneres aldrig til
+browseren. Ved redigering bevarer et tomt tokenfelt det eksisterende token.
+
+Under oprettelse eller **Indstillinger** på en VPN: aktivér automatisk DNS,
+indtast domænet og vælg en gemt nøgle. Flere VPN'er kan bruge samme nøgle
+til forskellige domæner i zonen. Tokenrotation foretages centralt. Zone ID
+kan ikke ændres på en nøgle i brug; opret i stedet en anden nøgle.
+Eksisterende profilnøgler importeres automatisk ved opstart. Den tidligere
+fil bevares af hensyn til tilbagerulning; den aktive opsætning bruger den
+centrale nøgle. Nøglefiler gemmes lokalt med rettighed 0600.
 
 DNS kræver præcis én eksisterende A-record for domænet. FjordFlix-valget
 kræver desuden aktiv TCP-videresendelse til din HTTPS-gateway og samme

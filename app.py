@@ -160,6 +160,21 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
             return jsonify(profiles=[dict(runtime.status(p), stream_status=stream_sync.statuses.get(p['id'], {}),
                 cloudflare_token_saved=(store.directory(p['id'])/'cloudflare-token').exists()) for p in store.all()])
 
+    @app.get('/api/cloudflare-keys')
+    def cloudflare_keys():
+        return jsonify(keys=store.keys())
+
+    @app.post('/api/cloudflare-keys')
+    @app.post('/api/cloudflare-keys/<ident>')
+    def save_cloudflare_key(ident=None):
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify(error='Ugyldige nøgleindstillinger.'), 400
+        try:
+            return jsonify(id=store.save_key(data, ident))
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+
     @app.post('/api/profiles')
     def create():
         try:

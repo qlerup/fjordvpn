@@ -87,7 +87,7 @@ media.init(db)
         address = str(ipaddress.IPv4Address(observed['public_ip']))
         if not ipaddress.ip_address(address).is_global:
             raise ValueError('VPN har endnu ingen offentlig IPv4-adresse.')
-        token = (self.store.directory(profile['id']) / 'cloudflare-token').read_text().strip()
+        token = self.store.sync_token(profile)
         if not config.get('fjordflix', True):
             self.dns(config, token, address)
             return config['domain']
