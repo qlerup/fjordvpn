@@ -6,6 +6,7 @@ import threading
 import uuid
 
 from configuration import parse_wireguard, validate_target
+from stream_sync import settings as stream_settings
 
 
 def atomic(path, data, mode=0o600):
@@ -51,27 +52,50 @@ class Store:
             'host': profile['host'], 'port': profile['port'],
             'enabled': profile['relay_enabled'], 'revision': profile['revision']}))
 
+    def prepare_stream(self, data, previous=None):
+        previous = previous or {}
+        token = data.get('cloudflare_token', '')
+        if not isinstance(token, str) or (token and not re.fullmatch(r'[A-Za-z0-9_-]{20,256}', token)):
+            raise ValueError('Ugyldigt Cloudflare API-token.')
+        saved = bool(previous.get('id') and (self.directory(previous['id']) / 'cloudflare-token').exists())
+        config = stream_settings(data, previous.get('stream_sync', {}), bool(token) or saved)
+        if config.get('enabled'):
+            if not data.get('relay_enabled'):
+                raise ValueError('TCP-videresendelse skal være aktiv for automatisk streaming.')
+            for other in self.all():
+                if other['id'] != previous.get('id') and other.get('stream_sync', {}).get('enabled'):
+                    raise ValueError('Kun én VPN kan styre FjordFlix-streamadressen. Slå automatik fra på den anden først.')
+        return config, token
+
     def create(self, data, raw, reserved=()):
         with self.lock:
             target = validate_target(data, self.networks)
+            stream, token = self.prepare_stream(data)
             config, metadata = parse_wireguard(raw)
             if metadata['fingerprint'] in set(reserved) | {p['fingerprint'] for p in self.all()}:
                 raise ValueError('Denne VPN-nøgle bruges allerede. Opret en ny konfiguration hos Proton, så den eksisterende VPN ikke bliver afbrudt.')
             if len(self.all()) >= 20:
                 raise ValueError('Der kan højst oprettes 20 forbindelser.')
             profile = dict(target, **metadata, id=uuid.uuid4().hex, desired=False, revision=uuid.uuid4().hex)
+            profile['stream_sync'] = stream
             folder = self.directory(profile['id'])
             folder.mkdir(mode=0o700)
             for name in ('state', 'relay', 'observed'):
                 (folder / name).mkdir(mode=0o700)
             atomic(folder / 'wg0.conf', config)
+            if token:
+                atomic(folder / 'cloudflare-token', token)
             self.save(profile)
             return profile
 
     def edit(self, ident, data):
         with self.lock:
             p = self.get(ident)
+            stream, token = self.prepare_stream(data, p)
             p.update(validate_target(data, self.networks), revision=uuid.uuid4().hex)
+            p['stream_sync'] = stream
+            if token:
+                atomic(self.directory(ident) / 'cloudflare-token', token)
             self.save(p)
             return p
 

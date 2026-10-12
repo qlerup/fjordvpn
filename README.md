@@ -79,7 +79,32 @@ En reverse proxy på målet kan fordele HTTPS-trafik mellem flere tjenester.
 Relayet lukker ved et mislykket VPN-healthcheck og følger ændringer i den
 tildelte port. Den lokale servers øvrige udgående trafik ændres ikke.
 IPv6 udelades fra importerede profiler. OpenVPN og UDP-relay indgår ikke.
-DNS og HTTPS-certifikater administreres separat; IP/port kan skifte hos Proton.
+IP/port kan skifte hos Proton. HTTPS-certifikater håndteres fortsat af din gateway.
+
+### Automatisk Cloudflare DNS og FjordFlix
+
+Åbn **Indstillinger** på din streaming-VPN, og slå **Hold DNS og streamport
+opdateret** til. Indtast videodomænet (uden protokol/port), Cloudflare Zone ID
+og et API-token med **Zone / DNS / Edit**, begrænset til den relevante zone.
+Zone ID findes på domænets oversigt i Cloudflare. Tokenet gemmes i en separat
+lokal fil med adgangsrettighed 0600 og returneres aldrig til browseren. Et tomt
+tokenfelt ved redigering beholder det gemte token.
+
+Forudsætninger: aktiv TCP-videresendelse til din HTTPS-gateway, præcis én
+eksisterende A-record for videodomænet og samme videodomæne opsat via
+FjordHubs streamguide. FjordFlix-containeren skal hedde `fjordflix` og være på
+samme Docker-vært. Automatikken er slået fra som standard; kun én profil kan
+styre FjordFlix ad gangen.
+
+FjordVPN kontrollerer cirka hvert 30. sekund, retter IP-adressen i Cloudflare
+med DNS-only og tester den nye HTTPS-adresse med et engangssvar fra FjordFlix.
+Først efter en bestået test opdateres porten i FjordFlix. Webadressen bevares.
+DNS-udbredelse kan forsinke skiftet. Fejl vises på VPN-kortet og prøves igen
+automatisk; ingen DNS-records slettes. Cloudflare gemmer IP'en, mens porten
+gemmes i FjordFlix. Ved portskift kan en igangværende afspilning skulle startes
+igen. FjordHubs manuelle guide viser fortsat dens senest gemte manuelle valg.
+
+API: https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/edit/
 
 Brug ikke samme Proton-nøgle i to aktive installationer. Appen afviser dubletter
 blandt sine egne profiler, men har ingen adgang til andre VPN-servere. Brug

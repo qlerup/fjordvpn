@@ -42,6 +42,10 @@ with tempfile.TemporaryDirectory() as data:
         assert len(app.extensions['store'].all())==1
         assert app.extensions['store'].all()[0]['desired'] is False
         page.get_by_role('button',name='Indstillinger',exact=True).click()
+        page.locator('#stream-sync-enabled').check()
+        page.locator('#stream-domain').fill('media.example.com')
+        page.locator('#stream-zone').fill('a'*32)
+        page.locator('#stream-token').fill('synthetic-cloudflare-token')
         page.locator('#profile-host').fill('8.8.8.8')
         page.locator('#save-button').click()
         page.locator('#form-error').wait_for(state='visible')
@@ -49,6 +53,11 @@ with tempfile.TemporaryDirectory() as data:
         page.locator('#profile-host').fill('192.168.1.110')
         page.locator('#save-button').click()
         page.locator('#profile-dialog').wait_for(state='hidden')
+        page.get_by_role('button',name='Indstillinger',exact=True).click()
+        assert page.locator('#stream-sync-enabled').is_checked()
+        assert page.locator('#stream-token').input_value() == ''
+        assert 'Token gemt' in page.locator('#stream-token').get_attribute('placeholder')
+        page.locator('#profile-dialog .close-dialog').first.click()
         # A second profile and an attempted duplicate exercise multi-profile upload feedback.
         page.locator('#new-button').click()
         page.locator('#profile-name').fill('Minecraft')

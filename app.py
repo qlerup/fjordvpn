@@ -13,6 +13,7 @@ from hub import Hub, HubError
 from configuration import parse_networks
 from runtime import Runtime
 from store import Store, atomic
+from stream_sync import StreamSync
 
 
 def create_app(root=None, testing=False, runtime_factory=Runtime):
@@ -156,7 +157,8 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
     @app.get('/api/profiles')
     def profiles():
         with store.lock:
-            return jsonify(profiles=[runtime.status(p) for p in store.all()])
+            return jsonify(profiles=[dict(runtime.status(p), stream_status=stream_sync.statuses.get(p['id'], {}),
+                cloudflare_token_saved=(store.directory(p['id'])/'cloudflare-token').exists()) for p in store.all()])
 
     @app.post('/api/profiles')
     def create():
@@ -198,6 +200,7 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
             return jsonify(error=str(e)),400
 
     stop_event=threading.Event()
+    stream_sync = StreamSync(store, runtime)
     app.extensions['stop_event']=stop_event
     def worker():
         while not stop_event.is_set():
@@ -209,6 +212,14 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
 
     if not testing:
         threading.Thread(target=worker,daemon=True).start()
+        def sync_worker():
+            while not stop_event.is_set():
+                try:
+                    stream_sync.tick()
+                except Exception:
+                    app.logger.error('Stream-synkronisering afventer; prøver igen.')
+                stop_event.wait(5)
+        threading.Thread(target=sync_worker,daemon=True).start()
     return app
 
 
