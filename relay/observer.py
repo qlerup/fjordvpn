@@ -1,8 +1,10 @@
 import csv
 import io
 import ipaddress
+from html.parser import HTMLParser
 import json
 import os
+import re
 from pathlib import Path
 import signal
 import subprocess
@@ -31,6 +33,7 @@ def stop(process):
 class PublicLocation:
     """Match the active IP against Proton's published geofeed, not generic GeoIP."""
     URL = 'https://ip.me/static/geofeeds/geofeed-mm.csv'
+    LOOKUP_URL = 'https://ip.me/ip/'
 
     def __init__(self):
         self.address = None
@@ -38,6 +41,36 @@ class PublicLocation:
         self.retry_at = 0
         self.expires_at = 0
         self.networks = []
+        self.lookup_address = None
+        self.lookup_country = ''
+        self.lookup_expires_at = 0
+        self.lookup_retry_at = 0
+
+    def lookup(self, address, now):
+        """Fallback for Proton exit ranges absent from the published geofeed."""
+        if address == self.lookup_address and now < self.lookup_expires_at:
+            return self.lookup_country
+        if now < self.lookup_retry_at:
+            return ''
+        self.lookup_retry_at = now + 60
+        try:
+            with urllib.request.urlopen(self.LOOKUP_URL + address, timeout=2) as response:
+                raw = response.read(262145)
+            if len(raw) > 262144:
+                return ''
+            page = raw.decode('utf-8')
+            parser = LocationPage()
+            parser.feed(page)
+            match = re.search(r'<th>\s*Country Code:\s*</th>\s*<td>\s*<code>\s*([A-Z]{2})\s*</code>\s*</td>', page)
+            # Never apply a home-page or redirected lookup for a different IP.
+            if parser.address != address or not match:
+                return ''
+            self.lookup_address = address
+            self.lookup_country = match.group(1)
+            self.lookup_expires_at = now + 3600
+            return self.lookup_country
+        except (OSError, ValueError, TypeError):
+            return ''
 
     def get(self, address):
         try:
@@ -77,7 +110,18 @@ class PublicLocation:
             except (OSError, ValueError, TypeError, csv.Error):
                 return ''  # Country failure must never change VPN readiness.
         self.country = next((country for network, country in self.networks if ip in network), '')
-        return self.country
+        return self.country or self.lookup(str(ip), now)
+
+
+class LocationPage(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.address = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == 'input' and attrs.get('id') == 'ip-lookup':
+            self.address = attrs.get('value')
 
 
 def observe():
