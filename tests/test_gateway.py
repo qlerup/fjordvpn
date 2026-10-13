@@ -1,0 +1,133 @@
+import io
+import ipaddress
+import json
+from unittest.mock import Mock
+
+import pytest
+from gateway import settings,caddy_config,GatewaySync
+from store import Store
+from seedbox_export import profiles
+from test_app import config,create_app,FakeRuntime,login
+
+
+NETWORKS=[ipaddress.ip_network('192.168.1.0/24')]
+TOKEN='a'*40
+
+
+def gateway(key='b'*32,**changes):
+    return {'enabled':True,'key_id':key,'routes':[
+        {'domain':'app.example.com','host':'192.168.1.110','port':8099,'protocol':'http'},
+        {'domain':'other.example.com','host':'192.168.1.111','port':443,'protocol':'https'}],**changes}
+
+
+@pytest.mark.parametrize('field,value',[('domain','evil.com/path'),('domain','*.example.com'),
+    ('host','8.8.8.8'),('host','localhost'),('host','192.168.1.0'),('port',True),('port',65536),
+    ('protocol','tcp'),('tls_server_name','bad/path')])
+def test_route_validation(field,value):
+    data=gateway();data['routes'][0][field]=value
+    with pytest.raises(ValueError):settings(data,NETWORKS)
+
+
+def test_gateway_requires_key_and_unique_routes():
+    for data in (gateway(routes=[]),gateway(key=''),gateway(routes=[gateway()['routes'][0]]*2)):
+        with pytest.raises(ValueError):settings(data,NETWORKS)
+
+
+def test_gateway_caddy_routing_tls_and_unknown_host():
+    routes=settings(gateway(),NETWORKS)['routes'];value=caddy_config(routes,38850)
+    assert value['admin']['disabled']
+    server=value['apps']['http']['servers']['gateway']
+    assert server['listen']==[':38850'] and server['tls_connection_policies']==[{}]
+    assert server['routes'][0]['match']==[{'host':['app.example.com']}]
+    assert server['routes'][0]['handle'][0]['upstreams']==[{'dial':'192.168.1.110:8099'}]
+    tls=server['routes'][1]['handle'][0]['transport']['tls']
+    assert tls=={'server_name':'other.example.com'}
+    assert server['routes'][-1]['handle'][0]['status_code']==404
+    assert TOKEN not in json.dumps(value)
+    assert 'insecure_skip_verify' not in json.dumps(value)
+
+
+def store_with_key(tmp_path):
+    store=Store(tmp_path,NETWORKS)
+    key=store.save_key({'name':'Example','zone_id':'b'*32,'token':TOKEN})
+    return store,key
+
+
+def test_new_gateway_preserves_old_profiles_and_reserves_torrent_port(tmp_path):
+    store,key=store_with_key(tmp_path)
+    old=store.create({'name':'Seedbox'},config(1));store.power(old['id'],True)
+    before=(store.directory(old['id'])/'profile.json').read_bytes()
+    p=store.create({'name':'Web gateway','gateway':gateway(key)},config(2))
+    assert p['desired'] is False
+    assert (store.directory(old['id'])/'profile.json').read_bytes()==before
+    assert next(v for v in profiles(tmp_path) if v['id']==p['id'])['relay_enabled'] is True
+    relay=json.loads((store.directory(p['id'])/'relay/settings.json').read_text())
+    assert relay['mode']=='gateway' and relay['enabled']
+    assert TOKEN not in json.dumps(p)
+    with pytest.raises(ValueError):store.create({'name':'Duplicate key','gateway':gateway(key)},config(1))
+    with pytest.raises(ValueError):store.edit(old['id'],{'name':'Seedbox','gateway':gateway(key)})
+
+
+def test_conflicting_domains_rotation_and_legacy_stream_reservations(tmp_path):
+    store,key=store_with_key(tmp_path)
+    p=store.create({'name':'Gateway','gateway':gateway(key)},config(1))
+    with pytest.raises(ValueError):store.create({'name':'Other gateway','gateway':gateway(key)},config(2))
+    with pytest.raises(ValueError):store.create({'name':'Legacy','stream_sync':{
+        'enabled':True,'key_id':key,'fjordflix':False,'domain':'app.example.com'}},config(3))
+    with pytest.raises(ValueError):store.save_key({'name':'Changed','zone_id':'c'*32,'token':TOKEN},key)
+    store.save_key({'name':'Rotated','zone_id':'b'*32,'token':'r'*40},key)
+    assert (store.directory(p['id'])/'relay/gateway-token').read_text()=='r'*40
+
+
+def test_gateway_api_is_opt_in_and_does_not_expose_credentials(tmp_path):
+    app=create_app(tmp_path,testing=True,runtime_factory=FakeRuntime);client,headers=login(app)
+    key=app.extensions['store'].save_key({'name':'Example','zone_id':'b'*32,'token':TOKEN})
+    def post(h):return client.post('/api/gateways',headers=h,data={'settings':json.dumps({'name':'Gateway','gateway':gateway(key)}),
+        'config':(io.BytesIO(config(1)),'gateway.conf')})
+    assert post({}).status_code==403
+    saved=post(headers);assert saved.status_code==201
+    listed=client.get('/api/profiles').json
+    assert listed['profiles'][0]['desired'] is False
+    assert TOKEN not in json.dumps(listed)
+
+
+def fixture_sync(tmp_path,records=None,ruleset=None):
+    store,key=store_with_key(tmp_path)
+    p=store.create({'name':'Gateway','gateway':gateway(key)},config());p=store.power(p['id'],True)
+    observed={'state':'online','relay_active':True,'public_ip':'1.1.1.1','public_port':38850}
+    runtime=Mock();runtime.status.return_value=observed
+    sync=GatewaySync(store,runtime)
+    def cf(token,method,path,**kwargs):
+        if method!='GET':return {'id':'result'}
+        if path.endswith('/dns_records'):return records or []
+        if path.endswith('/entrypoint'):return ruleset
+        return {'name':'example.com'}
+    sync.cf=Mock(side_effect=cf)
+    return sync,p,observed,store
+
+
+def test_cloudflare_creates_proxied_dns_and_one_port_rule_without_replacing_other_rules(tmp_path):
+    sync,p,observed,_=fixture_sync(tmp_path,ruleset={'id':'ruleset','rules':[{'id':'other','ref':'someone_else'}]})
+    assert sync.sync(p,observed)==['https://app.example.com','https://other.example.com']
+    writes=[c for c in sync.cf.call_args_list if c.args[1]!='GET']
+    assert len(writes)==3 and all(c.args[1]=='POST' for c in writes)
+    rule=writes[0].kwargs['json']
+    assert rule['action_parameters']=={'origin':{'port':38850}}
+    assert rule['ref']=='fjordvpn_gateway_'+p['id']
+    assert all(c.kwargs['json']['proxied'] is True for c in writes[1:])
+    assert all('ruleset/rules/other' not in c.args[2] for c in writes)
+
+
+def test_cloudflare_rejects_competing_dns_before_any_write(tmp_path):
+    sync,p,observed,_=fixture_sync(tmp_path,records=[{'type':'CNAME','name':'app.example.com'}])
+    with pytest.raises(ValueError):sync.sync(p,observed)
+    assert all(c.args[1]=='GET' for c in sync.cf.call_args_list)
+
+
+def test_stale_profile_cannot_publish_dns_and_legacy_profiles_are_not_synced(tmp_path):
+    sync,p,observed,store=fixture_sync(tmp_path)
+    store.power(p['id'],False)
+    with pytest.raises(ValueError):sync.sync(p,observed)
+    assert all(c.args[1]=='GET' for c in sync.cf.call_args_list)
+    store.create({'name':'Legacy'},config(2));sync.cf.reset_mock();sync.tick()
+    sync.cf.assert_not_called()

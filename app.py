@@ -14,6 +14,7 @@ from configuration import parse_networks
 from runtime import Runtime
 from store import Store, atomic
 from stream_sync import StreamSync
+from gateway import GatewaySync
 
 
 def create_app(root=None, testing=False, runtime_factory=Runtime):
@@ -158,6 +159,7 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
     def profiles():
         with store.lock:
             return jsonify(profiles=[dict(runtime.status(p), stream_status=stream_sync.statuses.get(p['id'], {}),
+                gateway_status=gateway_sync.statuses.get(p['id'],{}),
                 cloudflare_token_saved=(store.directory(p['id'])/'cloudflare-token').exists()) for p in store.all()])
 
     @app.get('/api/cloudflare-keys')
@@ -176,6 +178,7 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
             return jsonify(error=str(exc)), 400
 
     @app.post('/api/profiles')
+    @app.post('/api/gateways')
     def create():
         try:
             uploaded = request.files.get('config')
@@ -184,6 +187,8 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
             data = json.loads(request.form.get('settings','{}'))
             if not isinstance(data,dict):
                 raise ValueError('Ugyldige indstillinger.')
+            if request.path=='/api/gateways' and (not isinstance(data.get('gateway'),dict) or data['gateway'].get('enabled') is not True):
+                raise ValueError('Tilføj indstillinger for en ny VPN-gateway.')
             p=store.create(data,uploaded.read(16385))
             if data.get('start') is True:
                 store.power(p['id'],True)
@@ -216,6 +221,8 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
 
     stop_event=threading.Event()
     stream_sync = StreamSync(store, runtime)
+    gateway_sync = GatewaySync(store,runtime)
+    app.extensions['gateway_sync']=gateway_sync
     app.extensions['stop_event']=stop_event
     def worker():
         while not stop_event.is_set():
@@ -235,6 +242,14 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
                     app.logger.error('Stream-synkronisering afventer; prøver igen.')
                 stop_event.wait(5)
         threading.Thread(target=sync_worker,daemon=True).start()
+        def gateway_worker():
+            while not stop_event.is_set():
+                try:
+                    gateway_sync.tick()
+                except Exception:
+                    app.logger.error('Gateway-kontrol afventer; prøver igen.')
+                stop_event.wait(5)
+        threading.Thread(target=gateway_worker,daemon=True).start()
     return app
 
 

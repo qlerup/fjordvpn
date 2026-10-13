@@ -6,6 +6,7 @@
 !runtime.py
 !store.py
 !stream_sync.py
+!gateway.py
 !seedbox_export.py
 !relay/
 !relay/observer.py

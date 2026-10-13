@@ -71,6 +71,52 @@ Lad både `FJORDHUB_URL` og `FJORDHUB_API_KEY` være tomme ved selvstændig drif
 
 ## Forbindelser og videresendelse
 
+### Nye VPN-gateways til flere webapps
+
+**Ny VPN-gateway** ved siden af **Ny VPN** opretter en separat profil med en
+ny Proton-konfiguration. Tilføj op til 25 mål som `app.example.com →
+http://192.168.1.110:8099`. Hvert subdomæne får samme offentlige VPN-IP som
+origin i Cloudflare, mens Caddy fordeler HTTPS efter værtsnavnet til det rigtige
+lokale HTTP- eller HTTPS-mål. WebSocket-forbindelser understøttes af Caddy.
+Ukendte værtsnavne får ingen adgang til et standardmål.
+
+Cloudflare proxy skal være aktiv på gatewayens A-records. FjordVPN opretter
+eller opdaterer disse records og én egen Origin Rule, som sender almindelig
+HTTPS på port 443 til Protons aktuelt tildelte port. Derfor behøver browserens
+adresse intet portnummer. Andre Origin Rules erstattes ikke. Eksisterende CNAME,
+AAAA eller konkurrerende records afvises; ingen DNS-records slettes automatisk.
+Et subdomæne kan ikke overtages fra en anden FjordVPN-profil.
+
+Vælg en nøgle med **Zone / DNS / Edit**, **Zone / Zone / Read** og
+**Zone / Origin Rules / Edit**, begrænset til den relevante zone. Cloudflare
+skal være indstillet til **Full (strict)** SSL/TLS. Certifikater udstedes og
+fornyes automatisk med ACME DNS-01; certifikatdata gemmes under profilens
+`observed/caddy-data`. DNS-nøglen monteres som en privat fil og returneres aldrig
+til browseren eller placeres i Caddy-konfigurationen som klartekst.
+
+Gatewayen er slukket ved oprettelse, medmindre **Start gateway** vælges.
+Et lokalt HTTPS-mål skal have et gyldigt certifikat; angiv certifikatets navn,
+hvis det afviger fra det offentlige subdomæne. Der er ingen mulighed for at
+slå certifikatkontrol fra. Lokale apps skal tillade deres nye værtsnavn og være
+konfigureret til deres offentlige HTTPS-adresse.
+
+Eksisterende profiler beholder deres type, konfiguration, TCP-relay og
+FjordFlix-synkronisering. En gateway bruger Protons tildelte port til HTTPS,
+så den kan ikke samtidig være FjordSeeds torrentprofil. Brug fortsat en
+separat VPN til torrent-download/upload. FjordFlix' eksisterende direkte
+streamingopsætning kan fortsætte på sin nuværende profil; den flyttes ikke
+automatisk til Cloudflare-proxyen.
+
+Docker-imaget indeholder Caddy 2.11.4 med Cloudflare-modulet 0.2.4.
+Ved systemd-drift skal dette image først bygges som `fjordvpn-app:local`,
+eller vælges med `FJORDVPN_GATEWAY_IMAGE`; gamle TCP-relays bruger fortsat deres
+eksisterende relay-image. En normal opdatering af den eksisterende manager
+stopper dens administrerede tunneler kort under genstart. Planlæg derfor
+opdateringen særskilt, hvis de eksisterende forbindelser skal være uafbrudte.
+
+Teknisk reference: [Cloudflare Origin Rules](https://developers.cloudflare.com/rules/origin-rules/)
+og [destination port](https://developers.cloudflare.com/rules/origin-rules/features/#destination-port).
+
 Hver profil får sin egen Gluetun-container og et TCP-relay i samme
 netværksnamespace. Dashboardet forbliver tilgængeligt, selv om en VPN er slukket.
 En profil kan sende den offentlige Proton-port til ét lokalt `IP:port`-mål.

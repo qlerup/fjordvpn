@@ -10,6 +10,9 @@ def profiles(root):
     for path in sorted((Path(root) / 'profiles').glob('*/profile.json')):
         p = json.loads(path.read_text(encoding='utf-8'))
         item = {key: p[key] for key in fields}
+        # Gateways own the forwarded port; torrent clients need a separate profile.
+        if p.get('gateway',{}).get('enabled'):
+            item['relay_enabled']=True
         try:
             status = json.loads((path.parent/'observed/status.json').read_text())
             item['status'] = {key: status.get(key) for key in ('healthy','checked_at','public_ip','public_port','country')}

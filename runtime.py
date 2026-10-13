@@ -97,8 +97,11 @@ class Runtime:
                 observer.remove()
                 observer = None
         if observer is None:
-            extra={'command':['python','/app/relay/observer.py']} if os.environ.get('FJORDVPN_CONTAINER')=='1' else {}
-            observer = self.client.containers.create(self.relay_image, name=f'fjordvpn-{ident}-relay',
+            gateway=p.get('gateway',{}).get('enabled',False)
+            packaged=os.environ.get('FJORDVPN_CONTAINER')=='1'
+            extra={'command':['python','/app/relay/observer.py']} if packaged or gateway else {}
+            image=self.relay_image if packaged or not gateway else os.environ.get('FJORDVPN_GATEWAY_IMAGE','fjordvpn-app:local')
+            observer = self.client.containers.create(image, name=f'fjordvpn-{ident}-relay',
                 labels=self.labels(ident,'relay'), network_mode='container:' + vpn.id,
                 user=f'{os.getuid()}:{os.getgid()}',
                 environment={'LAN_SUBNETS': ','.join(map(str,self.store.networks))},
@@ -106,7 +109,7 @@ class Runtime:
                     str(host_folder/'relay'):{'bind':'/config','mode':'ro'},
                     str(host_folder/'observed'):{'bind':'/observed','mode':'rw'}},
                 read_only=True, cap_drop=['ALL'], security_opt=['no-new-privileges:true'],
-                init=True, restart_policy=self.restart_policy, mem_limit='96m',
+                init=True, restart_policy=self.restart_policy, mem_limit='256m' if p.get('gateway',{}).get('enabled') else '96m',
                 log_config=docker.types.LogConfig(type='json-file', config={'max-size':'2m','max-file':'2'}),**extra)
         if observer.status != 'running':
             observer.start()

@@ -7,6 +7,7 @@ import uuid
 
 from configuration import parse_wireguard, validate_target
 from stream_sync import settings as stream_settings
+from gateway import settings as gateway_settings
 
 
 def atomic(path, data, mode=0o600):
@@ -59,10 +60,13 @@ class Store:
                 raise ValueError('Indtast et gyldigt Cloudflare Zone ID.')
             if not isinstance(token, str) or not re.fullmatch('[A-Za-z0-9_-]{20,256}', token):
                 raise ValueError('Indtast et gyldigt Cloudflare API-token.')
-            if old and old['zone_id'] != zone and any(p.get('stream_sync', {}).get('key_id') == ident for p in self.all()):
+            if old and old['zone_id'] != zone and any(p.get('stream_sync', {}).get('key_id') == ident or p.get('gateway',{}).get('key_id')==ident for p in self.all()):
                 raise ValueError('Nøglen bruges af en VPN. Opret en ny nøgle for en anden zone.')
             ident = ident or uuid.uuid4().hex
             atomic(self.key_path(ident), json.dumps(dict(id=ident, name=name, zone_id=zone, token=token)))
+            for profile in self.all():
+                if profile.get('gateway',{}).get('key_id')==ident:
+                    atomic(self.directory(profile['id'])/'relay/gateway-token',token)
             return ident
 
     def migrate_keys(self):
@@ -101,9 +105,40 @@ class Store:
         folder = self.directory(profile['id'])
         atomic(folder / 'profile.json', json.dumps(profile))
         # Mount the directory, not an individual file, so atomic edits are visible.
-        atomic(folder / 'relay' / 'settings.json', json.dumps({
+        relay={
             'host': profile['host'], 'port': profile['port'],
-            'enabled': profile['relay_enabled'], 'revision': profile['revision']}))
+            'enabled': profile['relay_enabled'], 'revision': profile['revision']}
+        gateway=profile.get('gateway',{})
+        if gateway.get('enabled'):
+            relay.update(enabled=True,mode='gateway',routes=gateway['routes'])
+            atomic(folder/'relay/gateway-token',self.key(gateway['key_id'])['token'])
+        atomic(folder / 'relay' / 'settings.json', json.dumps(relay))
+
+    def prepare_gateway(self,data,previous=None):
+        previous=previous or {}
+        config=gateway_settings(data.get('gateway',previous.get('gateway',{'enabled':False})),self.networks)
+        if not config['enabled']:
+            if previous.get('gateway',{}).get('enabled'):
+                raise ValueError('Sluk gatewayen med Sluk-knappen. Dens profiltype kan ikke ændres.')
+            return config
+        if previous and not previous.get('gateway',{}).get('enabled'):
+            raise ValueError('Opret en ny VPN-gateway. Eksisterende profiler kan ikke ændres til gateway.')
+        stream=data.get('stream_sync',{})
+        if not isinstance(stream,dict):
+            raise ValueError('Ugyldige streamindstillinger.')
+        if data.get('relay_enabled') or stream.get('enabled'):
+            raise ValueError('Gatewayen bruger sin egen HTTPS-fordeling. TCP-relay og streamsynkronisering skal være slået fra.')
+        self.key(config['key_id'])
+        domains={r['domain'] for r in config['routes']}
+        for other in self.all():
+            if other['id']==previous.get('id'):
+                continue
+            used={r['domain'] for r in other.get('gateway',{}).get('routes',[])}
+            if other.get('stream_sync',{}).get('enabled'):
+                used.add(other['stream_sync']['domain'])
+            if domains & used:
+                raise ValueError('Et subdomæne styres allerede af en anden VPN. Brug et nyt navn.')
+        return config
 
     def prepare_stream(self, data, previous=None):
         previous = previous or {}
@@ -126,6 +161,8 @@ class Store:
             if config.get('fjordflix', True) and not data.get('relay_enabled'):
                 raise ValueError('TCP-videresendelse skal være aktiv for automatisk streaming.')
             for other in self.all():
+                if other['id']!=previous.get('id') and any(r['domain']==config['domain'] for r in other.get('gateway',{}).get('routes',[])):
+                    raise ValueError('Domænet styres allerede af en VPN-gateway.')
                 if other['id'] != previous.get('id') and other.get('stream_sync', {}).get('enabled'):
                     other_config = other['stream_sync']
                     if other_config['domain'] == config['domain']:
@@ -138,6 +175,7 @@ class Store:
         with self.lock:
             target = validate_target(data, self.networks)
             stream, token = self.prepare_stream(data)
+            gateway=self.prepare_gateway(data)
             config, metadata = parse_wireguard(raw)
             if metadata['fingerprint'] in set(reserved) | {p['fingerprint'] for p in self.all()}:
                 raise ValueError('Denne VPN-nøgle bruges allerede. Opret en ny konfiguration hos Proton, så den eksisterende VPN ikke bliver afbrudt.')
@@ -145,6 +183,8 @@ class Store:
                 raise ValueError('Der kan højst oprettes 20 forbindelser.')
             profile = dict(target, **metadata, id=uuid.uuid4().hex, desired=False, revision=uuid.uuid4().hex)
             profile['stream_sync'] = stream
+            if gateway['enabled']:
+                profile['gateway']=gateway
             folder = self.directory(profile['id'])
             folder.mkdir(mode=0o700)
             for name in ('state', 'relay', 'observed'):
@@ -158,9 +198,12 @@ class Store:
     def edit(self, ident, data):
         with self.lock:
             p = self.get(ident)
+            gateway=self.prepare_gateway(data,p)
             stream, token = self.prepare_stream(data, p)
             p.update(validate_target(data, self.networks), revision=uuid.uuid4().hex)
             p['stream_sync'] = stream
+            if gateway['enabled']:
+                p['gateway']=gateway
             if token:
                 atomic(self.directory(ident) / 'cloudflare-token', token)
             self.save(p)

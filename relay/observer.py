@@ -3,14 +3,18 @@ import io
 import ipaddress
 from html.parser import HTMLParser
 import json
+import hashlib
 import os
 import re
 from pathlib import Path
 import signal
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
+
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 
 shutdown = threading.Event()
 for sig in (signal.SIGINT, signal.SIGTERM):
@@ -149,24 +153,39 @@ def observe():
                         state['public_port'] = port
                         state['message'] = 'VPN og offentlig port er klar'
                         if settings['enabled']:
-                            target = ipaddress.IPv4Address(settings['host'])
-                            target_port = settings['port']
-                            if any(target in n and target not in (n.network_address,n.broadcast_address) for n in networks) and type(target_port) is int and 1 <= target_port <= 65535:
-                                wanted = (port, str(target), target_port, settings['revision'])
+                            if settings.get('mode')=='gateway':
+                                from gateway import settings as validate_gateway
+                                validated=validate_gateway({'enabled':True,'key_id':'0'*32,'routes':settings['routes']},networks)
+                                token=Path('/config/gateway-token').read_bytes()
+                                wanted=('gateway',port,json.dumps(validated['routes'],sort_keys=True),
+                                        settings['revision'],hashlib.sha256(token).hexdigest())
+                            else:
+                                target = ipaddress.IPv4Address(settings['host'])
+                                target_port = settings['port']
+                                if any(target in n and target not in (n.network_address,n.broadcast_address) for n in networks) and type(target_port) is int and 1 <= target_port <= 65535:
+                                    wanted = (port, str(target), target_port, settings['revision'])
             except (OSError, ValueError, KeyError, TypeError):
                 pass
             if current != wanted or (process is not None and process.poll() is not None):
                 stop(process)
                 process, current = None, None
                 if wanted:
-                    port, host, target_port, _ = wanted
-                    process = subprocess.Popen(['socat', f'TCP4-LISTEN:{port},reuseaddr,fork,nodelay',
-                        f'TCP4:{host}:{target_port},connect-timeout=5,nodelay'], start_new_session=True,
+                    if wanted[0]=='gateway':
+                        from gateway import caddy_config
+                        config=caddy_config(json.loads(wanted[2]),wanted[1])
+                        path=Path('/observed/caddy.json')
+                        path.write_text(json.dumps(config));path.chmod(0o600)
+                        command=['caddy','run','--config',str(path)]
+                    else:
+                        port, host, target_port, _ = wanted
+                        command=['socat', f'TCP4-LISTEN:{port},reuseaddr,fork,nodelay',
+                                 f'TCP4:{host}:{target_port},connect-timeout=5,nodelay']
+                    process = subprocess.Popen(command, start_new_session=True,
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     current = wanted
             state['relay_active'] = bool(process and process.poll() is None)
             if state['relay_active']:
-                state['message'] = 'TCP-videresendelse aktiv'
+                state['message'] = 'HTTPS-gateway aktiv' if wanted and wanted[0]=='gateway' else 'TCP-videresendelse aktiv'
             state['checked_at'] = time.time()
             temporary = Path('/observed/status.tmp')
             temporary.write_text(json.dumps(state))

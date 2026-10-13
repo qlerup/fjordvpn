@@ -6,16 +6,23 @@ function el(tag, cls, text) { const node=document.createElement(tag); if(cls) no
 function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,4000); }
 async function api(path,options={}) { const response=await fetch(path,{...options,headers:{'X-CSRF-Token':csrf,...options.headers}}); if(response.status===401){location.href='/login';throw Error('Log ind igen.');} const data=await response.json(); if(!response.ok)throw Error(data.error||'Handlingen kunne ikke gennemføres.'); return data; }
 function card(p,legacy=false){
+ const gateway=p.gateway?.enabled;
  const node=el('article','vpn-card'); const main=el('div','card-main'); const top=el('div','card-top'); const title=el('div','card-title');
  title.append(el('span','vpn-icon',legacy?'◈':'⇄')); const names=el('div'); names.append(el('h3','',p.name),el('p','card-subtitle',legacy?p.location:'Proton VPN · WireGuard')); title.append(names);
  top.append(title,el('span','badge '+p.state,states[p.state]||'Ukendt')); main.append(top);
+ if(gateway)names.querySelector('.card-subtitle').textContent='VPN-gateway · HTTPS';
  const row=el('div','address-row'),address=el('div'); address.append(el('p','label','Offentlig IP og port')); const value=p.public_ip?(p.public_ip+(p.public_port?':'+p.public_port:'')):'Afventer forbindelse'; address.append(el('p','address',value));row.append(address);
  if(p.public_ip){const copy=el('button','copy-button','Kopiér');copy.type='button';copy.addEventListener('click',()=>copyText(value));row.append(copy);} main.append(row); if(p.public_ip&&!legacy) main.append(countryInfo(p.country));
  const targetRow=el('div','target-row'),target=el('div');target.append(el('p','label','Lokalt mål'),el('p','target',p.host&&p.port?`${p.host}:${p.port}`:'Intet mål valgt'));targetRow.append(target,el('span','small muted',p.relay_active?'TCP aktiv':legacy?'Eksisterende opsætning':p.relay_enabled?'TCP afventer':'TCP slået fra'));main.append(targetRow);
  if(p.stream_sync?.enabled) main.append(el('p','small '+(p.stream_status?.ok?'':'muted'),p.stream_status?.message||'Automatisk DNS og streamport afventer kontrol.'));
+ if(gateway){
+  target.querySelector('.target').textContent=p.gateway.routes.length+(p.gateway.routes.length===1?' subdomæne':' subdomæner');targetRow.lastChild.textContent=p.relay_active?'HTTPS aktiv':'HTTPS afventer';
+  for(const route of p.gateway.routes){const item=el('div','gateway-card-route');item.append(el('span','',route.domain),el('span','small muted',`${route.protocol}://${route.host}:${route.port}`));main.append(item);}
+  main.append(el('p','small muted',p.gateway_status?.message||'DNS og HTTPS-port afventer kontrol.'));
+ }
  const footer=el('div','card-footer');footer.append(el('p','card-message',p.message||''));const actions=el('div','card-actions');
  if(legacy){if(p.url){const link=el('a','','Åbn ↗');link.href=p.url;link.target='_blank';link.rel='noopener';actions.append(link);}}
- else{const edit=el('button','','Indstillinger');edit.addEventListener('click',()=>openForm(p));const power=el('button','',p.desired?'Sluk':'Start');power.addEventListener('click',async()=>{power.disabled=true;try{await api(`/api/profiles/${p.id}/power`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!p.desired})});toast(p.desired?'VPN slukkes…':'VPN starter…');await refresh();}catch(e){toast(e.message);}finally{power.disabled=false;}});actions.append(edit,power);}
+ else{const edit=el('button','','Indstillinger');edit.addEventListener('click',()=>p.gateway?.enabled?openGatewayForm(p):openForm(p));const power=el('button','',p.desired?'Sluk':'Start');power.addEventListener('click',async()=>{power.disabled=true;try{await api(`/api/profiles/${p.id}/power`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!p.desired})});toast(p.desired?'VPN slukkes…':'VPN starter…');await refresh();}catch(e){toast(e.message);}finally{power.disabled=false;}});actions.append(edit,power);}
  footer.append(actions);node.append(main,footer);return node;
 }
 async function copyText(value){try{if(navigator.clipboard){await navigator.clipboard.writeText(value);}else{const area=el('textarea');area.value=value;document.body.append(area);area.select();document.execCommand('copy');area.remove();}toast('Adressen er kopieret');}catch{toast('Adressen kunne ikke kopieres');}}
