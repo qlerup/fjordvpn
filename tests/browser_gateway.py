@@ -37,6 +37,7 @@ with tempfile.TemporaryDirectory() as folder:
             rows.nth(1).locator('[data-gateway-field=host]').fill('192.168.1.111')
             rows.nth(1).locator('[data-gateway-field=protocol]').select_option('https')
             expect(rows.nth(1).locator('[data-gateway-field=port]')).to_have_value('443')
+            rows.nth(1).locator('[data-gateway-field=fjordflix]').check()
             output=root/'test-results';output.mkdir(exist_ok=True)
             page.screenshot(path=str(output/'gateway-desktop.png'),full_page=True)
             page.set_viewport_size({'width':390,'height':844})
@@ -46,6 +47,7 @@ with tempfile.TemporaryDirectory() as folder:
             gateways=[v for v in store.all() if v.get('gateway',{}).get('enabled')]
             assert len(gateways)==1 and not gateways[0]['desired'] and len(gateways[0]['gateway']['routes'])==2
             assert gateways[0]['gateway']['auto_sync'] is False
+            assert gateways[0]['gateway']['routes'][1]['fjordflix'] is True
             assert (store.directory(old['id'])/'profile.json').read_bytes()==before
             card=page.locator('.vpn-card').filter(has_text='Mine webapps')
             expect(card).to_contain_text('app.example.com')
@@ -54,6 +56,7 @@ with tempfile.TemporaryDirectory() as folder:
             expect(page.locator('#gateway-auto-sync')).not_to_be_checked()
             page.locator('#gateway-auto-sync').check()
             expect(rows).to_have_count(2)
+            expect(rows.nth(1).locator('[data-gateway-field=fjordflix]')).to_be_checked()
             rows.nth(1).get_by_role('button',name='Fjern mål',exact=True).click()
             page.locator('#gateway-save').click();expect(dialog).not_to_be_visible()
             assert len(store.get(gateways[0]['id'])['gateway']['routes'])==1

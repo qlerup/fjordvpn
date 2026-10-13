@@ -1,7 +1,7 @@
 import io
 import ipaddress
 import json
-from unittest.mock import Mock
+from unittest.mock import Mock,patch
 
 import pytest
 from gateway import settings,caddy_config,GatewaySync
@@ -143,3 +143,62 @@ def test_auto_sync_can_be_disabled_and_reenabled(tmp_path):
 
 def test_auto_sync_requires_boolean():
     with pytest.raises(ValueError):settings(gateway(auto_sync='yes'),NETWORKS)
+
+
+def test_stream_route_validated_and_only_media_paths_are_exposed():
+    data=gateway();data['routes'][1]['fjordflix']=True
+    routes=settings(data,NETWORKS)['routes']
+    match=caddy_config(routes,40000)['apps']['http']['servers']['gateway']['routes'][1]['match']
+    assert match==[{'host':['other.example.com'],'path':['/media/*']}]
+    data['routes'][0]['fjordflix']=True
+    with pytest.raises(ValueError):settings(data,NETWORKS)
+    data['routes'][0]['fjordflix']='yes'
+    with pytest.raises(ValueError):settings(data,NETWORKS)
+
+
+def test_gateway_stream_migrates_dns_and_proves_https_before_port_activation(tmp_path):
+    sync,p,observed,store=fixture_sync(tmp_path,ruleset={'id':'ruleset','rules':[]})
+    p['gateway']['routes'][1]['fjordflix']=True;store.save(p)
+    sync.stream.flix=Mock(return_value={'media':'https://other.example.com:30000','web':'https://app.example.com'})
+    with patch('stream_sync.secrets.token_urlsafe',return_value='nonce'),patch('stream_sync.requests.Session') as session:
+        response=session.return_value.__enter__.return_value.get.return_value
+        response.status_code=200;response.json.return_value={'nonce':'wrong'}
+        with pytest.raises(ValueError,match='HTTPS'):sync.sync(p,observed)
+        assert not any(c.args[0]=='activate' for c in sync.stream.flix.call_args_list)
+        writes=[c.kwargs['json'] for c in sync.cf.call_args_list if c.args[1]!='GET']
+        rule=next(w for w in writes if 'expression' in w)
+        assert 'app.example.com' in rule['expression'] and 'other.example.com' not in rule['expression']
+        dns=[w for w in writes if w.get('type')=='A']
+        assert [(w['name'],w['proxied'],w['ttl']) for w in dns]==[
+            ('app.example.com',True,1),('other.example.com',False,60)]
+        response.json.return_value={'nonce':'nonce'}
+        assert sync.sync(p,observed)==['https://app.example.com','https://other.example.com:38850']
+        sync.stream.flix.assert_called_with('activate','https://other.example.com:38850','https://app.example.com')
+        assert session.return_value.__enter__.return_value.get.call_args.kwargs['allow_redirects'] is False
+        # A changed VPN endpoint must never activate the tested old port.
+        sync.stream.flix.reset_mock();sync.runtime.status.return_value={**observed,'public_port':40000}
+        with pytest.raises(ValueError):sync.stream.verify_stream('other.example.com',38850,lambda:sync.current(p,observed))
+        assert not any(c.args[0]=='activate' for c in sync.stream.flix.call_args_list)
+
+
+def test_gateway_stream_has_single_writer_across_legacy_and_gateway_profiles(tmp_path):
+    store,key=store_with_key(tmp_path)
+    legacy=store.create({'name':'Legacy','host':'192.168.1.110','port':443,'relay_enabled':True,
+        'stream_sync':{'enabled':True,'key_id':key,'domain':'media.example.com','fjordflix':True}},config(1))
+    data=gateway(key);data['routes'][1]['fjordflix']=True
+    with pytest.raises(ValueError,match='FjordFlix'):store.create({'name':'Gateway','gateway':data},config(2))
+    legacy['stream_sync']['enabled']=False;store.save(legacy)
+    store.create({'name':'Gateway','gateway':data},config(2))
+    with pytest.raises(ValueError,match='FjordFlix'):store.edit(legacy['id'],{
+        'name':'Legacy','host':'192.168.1.110','port':443,'relay_enabled':True,
+        'stream_sync':{**legacy['stream_sync'],'enabled':True}})
+
+
+def test_wrong_stream_domain_keeps_media_dns_and_allows_web_updates(tmp_path):
+    sync,p,observed,store=fixture_sync(tmp_path)
+    p['gateway']['routes'][1]['fjordflix']=True;store.save(p)
+    sync.stream.flix=Mock(return_value={'media':'https://unrelated.example.com:30000','web':'https://app.example.com'})
+    with pytest.raises(ValueError):sync.sync(p,observed)
+    writes=[c.kwargs['json'] for c in sync.cf.call_args_list if c.args[1]!='GET']
+    dns=[w for w in writes if w.get('type')=='A']
+    assert [w['name'] for w in dns]==['app.example.com']

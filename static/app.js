@@ -17,7 +17,7 @@ function card(p,legacy=false){
  if(p.stream_sync?.enabled) main.append(el('p','small '+(p.stream_status?.ok?'':'muted'),p.stream_status?.message||'Automatisk DNS og streamport afventer kontrol.'));
  if(gateway){
   target.querySelector('.target').textContent=p.gateway.routes.length+(p.gateway.routes.length===1?' subdomæne':' subdomæner');targetRow.lastChild.textContent=p.relay_active?'HTTPS aktiv':'HTTPS afventer';
-  for(const route of p.gateway.routes){const item=el('div','gateway-card-route');item.append(el('span','',route.domain),el('span','small muted',`${route.protocol}://${route.host}:${route.port}`));main.append(item);}
+  for(const route of p.gateway.routes){const item=el('div','gateway-card-route');item.append(el('span','',route.domain+(route.fjordflix?' · Direkte stream'+(p.public_port?' :'+p.public_port:''):'')),el('span','small muted',`${route.protocol}://${route.host}:${route.port}`));main.append(item);}
   main.append(el('p','small muted',p.gateway_status?.message||'DNS og HTTPS-port afventer kontrol.'));
  }
  const footer=el('div','card-footer');footer.append(el('p','card-message',p.message||''));const actions=el('div','card-actions');

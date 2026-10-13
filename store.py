@@ -130,6 +130,7 @@ class Store:
             raise ValueError('Gatewayen bruger sin egen HTTPS-fordeling. TCP-relay og streamsynkronisering skal være slået fra.')
         self.key(config['key_id'])
         domains={r['domain'] for r in config['routes']}
+        flix=any(r.get('fjordflix') for r in config['routes'])
         for other in self.all():
             if other['id']==previous.get('id'):
                 continue
@@ -138,6 +139,9 @@ class Store:
                 used.add(other['stream_sync']['domain'])
             if domains & used:
                 raise ValueError('Et subdomæne styres allerede af en anden VPN. Brug et nyt navn.')
+            if flix and (any(r.get('fjordflix') for r in other.get('gateway',{}).get('routes',[]))
+                         or (other.get('stream_sync',{}).get('enabled') and other['stream_sync'].get('fjordflix',True))):
+                raise ValueError('Slå FjordFlix-synkronisering fra på den gamle VPN først. Kun én profil kan styre streamadressen.')
         return config
 
     def prepare_stream(self, data, previous=None):
@@ -161,6 +165,9 @@ class Store:
             if config.get('fjordflix', True) and not data.get('relay_enabled'):
                 raise ValueError('TCP-videresendelse skal være aktiv for automatisk streaming.')
             for other in self.all():
+                if (other['id']!=previous.get('id') and config.get('fjordflix',True)
+                        and any(r.get('fjordflix') for r in other.get('gateway',{}).get('routes',[]))):
+                    raise ValueError('FjordFlix-streamadressen styres allerede af en VPN-gateway.')
                 if other['id']!=previous.get('id') and any(r['domain']==config['domain'] for r in other.get('gateway',{}).get('routes',[])):
                     raise ValueError('Domænet styres allerede af en VPN-gateway.')
                 if other['id'] != previous.get('id') and other.get('stream_sync', {}).get('enabled'):

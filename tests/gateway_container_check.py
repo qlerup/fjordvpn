@@ -6,7 +6,7 @@ from gateway import caddy_config
 
 
 routes=[{'domain':'app.example.com','host':'127.0.0.1','port':8201,'protocol':'http'},
-        {'domain':'other.example.com','host':'127.0.0.1','port':8202,'protocol':'http'}]
+        {'domain':'other.example.com','host':'127.0.0.1','port':8202,'protocol':'http','fjordflix':True}]
 with tempfile.TemporaryDirectory() as folder:
     root=Path(folder)
     token=root/'token';token.write_text('a'*40)
@@ -49,7 +49,8 @@ with tempfile.TemporaryDirectory() as folder:
                 if time.monotonic()>deadline:raise
                 time.sleep(.1)
         assert 'FIRST /probe?x=1 app.example.com https' in first,first
-        second=get('other.example.com');assert 'SECOND /probe?x=1 other.example.com https' in second,second
+        second=get('other.example.com',path='/media/probe?x=1',host='other.example.com:8443');assert 'SECOND /media/probe?x=1 other.example.com:8443 https' in second,second
+        blocked=get('other.example.com',path='/');assert '404' in blocked.splitlines()[0] and 'SECOND' not in blocked,blocked
         unknown=get('app.example.com',host='unconfigured.example.com')
         assert '404' in unknown.splitlines()[0] or '421' in unknown.splitlines()[0],unknown
         assert 'FIRST' not in unknown and 'SECOND' not in unknown

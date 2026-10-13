@@ -62,3 +62,20 @@ while the Origin Rules entrypoint returned HTTP 403 (code 10000). A zone-scoped
 token with Origin Rules Edit is required before public DNS/HTTPS verification.
 The manager must be updated to this Dockerfile before recreating the gateway
 observer, so subsequent starts also use the permanent capability fix.
+
+## Shared web and direct FjordFlix streaming
+
+The gateway now supports one opt-in direct FjordFlix media route alongside web
+routes. Media DNS is unproxied, its hostname is excluded from the Origin Rule,
+and Caddy only forwards `/media/*`. The existing verified HTTPS/nonce check is
+shared with legacy streaming before activating a new stream URL. Store validation
+allows only one FjordFlix stream writer across gateway and legacy profiles.
+If FjordFlix cannot be contacted, other web routes can still synchronize.
+
+Verification: 72 Python tests passed, both desktop/mobile browser suites passed,
+and the isolated read-only/capability-restricted Caddy test passed with web and
+media routes sharing a port. The latter checks a media Host header containing
+the public port and rejects the media hostname's web root. After the final
+web-sync isolation adjustment, all 33 gateway/stream tests passed again.
+No active media DNS or production stream configuration was changed for this
+feature. Real video playback remains a migration check in the setup guide.

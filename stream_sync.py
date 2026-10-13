@@ -127,13 +127,28 @@ media.init(db)
         port = int(observed['public_port'])
         if not 1 <= port <= 65535:
             raise ValueError('VPN har endnu ingen offentlig port.')
-        current = self.flix('status')
-        host = config['domain'] + (f':{port}' if port != 443 else '')
-        url = 'https://' + host
-        # The initial guide establishes certificate/web origin; don't replace another domain.
-        if urlsplit(current['media']).hostname != config['domain'] or not current['web'].startswith('https://'):
-            raise ValueError('Opsæt dette videodomæne og webadressen i FjordHubs streamguide først.')
+        current=self.stream_state(config['domain'])
         self.dns(config, token, address)
+        def check_current():
+            fresh = self.store.get(profile['id'])
+            latest = self.runtime.status(fresh)
+            if (fresh != profile or latest['state'] != 'online' or not latest['relay_active']
+                    or latest['public_ip'] != address or int(latest['public_port']) != port):
+                raise ValueError('VPN-indstillingerne blev ændret. Prøver igen med den nye adresse.')
+        return self.verify_stream(config['domain'], port, check_current, current)
+
+    def stream_state(self, domain):
+        current = self.flix('status')
+        # The initial guide establishes certificate/web origin; don't replace another domain.
+        if urlsplit(current['media']).hostname != domain or not current['web'].startswith('https://'):
+            raise ValueError('Opsæt dette videodomæne og webadressen i FjordHubs streamguide først.')
+        return current
+
+    def verify_stream(self, domain, port, check_current, current=None):
+        """Only activate the endpoint after verified HTTPS and a FjordFlix nonce."""
+        current=current or self.stream_state(domain)
+        host = domain + (f':{port}' if port != 443 else '')
+        url = 'https://' + host
         # Verify IP-only changes too, with the normal TLS certificate checks.
         nonce = secrets.token_urlsafe(32)
         self.flix('probe', host, nonce)
@@ -144,11 +159,9 @@ media.init(db)
             raise ValueError('DNS er opdateret; afventer korrekt HTTPS-forbindelse til FjordFlix.')
         # Configuration or the VPN endpoint may have changed while DNS/HTTPS was checked.
         with self.store.lock:
-            fresh = self.store.get(profile['id'])
-            latest = self.runtime.status(fresh)
-            if (fresh != profile or latest['state'] != 'online' or not latest['relay_active']
-                    or latest['public_ip'] != address or int(latest['public_port']) != port):
-                raise ValueError('VPN-indstillingerne blev ændret. Prøver igen med den nye adresse.')
+            check_current()
+            if self.flix('status')!=current:
+                raise ValueError('FjordFlix-indstillingerne ændrede sig under forbindelsestesten. Prøver igen.')
             if current['media'] != url:
                 self.flix('activate', url, current['web'])
         return url

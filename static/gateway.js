@@ -7,12 +7,15 @@ function gatewayRoute(row={}){
   const wrapper=el('label','',label),input=el('input');input.type=type;input.dataset.gatewayField=key;input.placeholder=placeholder;input.value=value??'';wrapper.append(input);return [wrapper,input];
  }
  const [domain,d]=field('Subdomæne','domain','app.ditdomæne.dk',row.domain);d.required=true;d.maxLength=253;
+ const flixLabel=el('label','check'),flix=el('input');flix.type='checkbox';flix.dataset.gatewayField='fjordflix';flix.checked=!!row.fjordflix;
+ flixLabel.append(flix,document.createTextNode('Direkte FjordFlix-streaming og automatisk streamport'));
+ const flixHelp=el('p','small muted','Brug på media-domænet. Cloudflare-proxy slås fra, kun /media/ videresendes, og FjordFlix får gatewayens aktuelle HTTPS-port efter en forbindelsestest. Slå den gamle VPNs automatiske DNS/streamopdatering fra først.');
  const fields=el('div','gateway-target-fields');
  const protocolLabel=el('label','','Forbindelse til målet'),protocol=el('select');protocol.dataset.gatewayField='protocol';
  for(const value of ['http','https']){const option=el('option','',value.toUpperCase());option.value=value;protocol.append(option);}protocol.value=row.protocol||'http';protocolLabel.append(protocol);
  const [host,h]=field('Lokal IP','host','192.168.1.110',row.host);h.required=true;h.inputMode='decimal';
  const [port,p]=field('Lokal port','port','80',row.port??80,'number');p.min=1;p.max=65535;p.required=true;
- fields.append(protocolLabel,host,port);card.append(domain,fields);
+ fields.append(protocolLabel,host,port);card.append(domain,flixLabel,flixHelp,fields);
  const [tls,t]=field('Certifikatnavn på lokalt HTTPS-mål (valgfrit)','tls_server_name','Bruger subdomænet, hvis feltet er tomt',row.tls_server_name);t.maxLength=253;
  function updateProtocol(){tls.hidden=protocol.value!=='https';if(protocol.value==='https'&&p.value==='80')p.value='443';}
  protocol.onchange=updateProtocol;card.append(tls);updateProtocol();return card;
@@ -38,7 +41,7 @@ $('#gateway-add-route').onclick=()=>{
 $('#gateway-form').onsubmit=async event=>{
  event.preventDefault();$('#gateway-save').disabled=true;$('#gateway-error').hidden=true;
  const routes=[...$('#gateway-routes').children].map(row=>{
-  const values={};for(const field of row.querySelectorAll('[data-gateway-field]'))values[field.dataset.gatewayField]=field.value;
+  const values={};for(const field of row.querySelectorAll('[data-gateway-field]'))values[field.dataset.gatewayField]=field.type==='checkbox'?field.checked:field.value;
   values.port=Number(values.port);return values;
  });
  const values={name:$('#gateway-name').value,host:'',port:null,relay_enabled:false,

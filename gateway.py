@@ -6,6 +6,7 @@ import time
 
 import requests
 from configuration import validate_target
+from stream_sync import StreamSync
 
 
 DOMAIN = re.compile(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}')
@@ -42,11 +43,16 @@ def settings(value, networks):
         if protocol not in ('http','https'):
             raise ValueError('Vælg HTTP eller HTTPS til det lokale mål.')
         server_name=hostname(row['tls_server_name']) if row.get('tls_server_name') else domain
+        flix=row.get('fjordflix',False)
+        if type(flix) is not bool:
+            raise ValueError('Vælg om domænet bruges til FjordFlix-streaming.')
         if domain in seen:
             raise ValueError('Hvert subdomæne må kun have ét lokalt mål.')
         seen.add(domain)
         result.append({'domain':domain,'host':target['host'],'port':target['port'],
-                       'protocol':protocol,'tls_server_name':server_name})
+                       'protocol':protocol,'tls_server_name':server_name,'fjordflix':flix})
+    if sum(r['fjordflix'] for r in result)>1:
+        raise ValueError('Kun ét domæne kan styre FjordFlix-streamadressen.')
     return {'enabled':True,'key_id':key,'routes':result,'auto_sync':auto}
 
 
@@ -57,7 +63,10 @@ def caddy_config(routes,port,token_file='/config/gateway-token',storage='/observ
         proxy={'handler':'reverse_proxy','upstreams':[{'dial':f"{row['host']}:{row['port']}"}]}
         if row['protocol']=='https':
             proxy['transport']={'protocol':'http','tls':{'server_name':row['tls_server_name']}}
-        handlers.append({'match':[{'host':[row['domain']]}],'handle':[proxy],'terminal':True})
+        match={'host':[row['domain']]}
+        if row.get('fjordflix'):
+            match['path']=['/media/*']
+        handlers.append({'match':[match],'handle':[proxy],'terminal':True})
     handlers.append({'handle':[{'handler':'static_response','status_code':404}]})
     return {'admin':{'disabled':True,'config':{'persist':False}},
             'storage':{'module':'file_system','root':storage},
@@ -73,6 +82,7 @@ class GatewaySync:
     def __init__(self,store,runtime):
         self.store,self.runtime=store,runtime
         self.statuses,self.next_check={},{}
+        self.stream=StreamSync(store,runtime)
 
     def cf(self,token,method,path,allow_missing=False,**kwargs):
         with requests.Session() as session:
@@ -103,8 +113,16 @@ class GatewaySync:
         zone='/zones/'+key['zone_id']
         name=self.cf(token,'GET',zone)['name'].lower()
         domains=[r['domain'] for r in config['routes']]
+        web_domains=[r['domain'] for r in config['routes'] if not r.get('fjordflix')]
         if any(not d.endswith('.'+name) for d in domains):
             raise ValueError('Alle subdomæner skal tilhøre den valgte Cloudflare-zone.')
+        stream_state=None;stream_error=None
+        try:
+            stream_state=next((self.stream.stream_state(r['domain']) for r in config['routes'] if r.get('fjordflix')),None)
+        except Exception as exc:
+            # A stopped FjordFlix app must not block updates for other webapps.
+            # Keep its direct DNS untouched and report the error after web sync.
+            stream_error=exc
         # Inspect every DNS name before writing any of them. No record is deleted.
         records=[]
         for domain in domains:
@@ -116,8 +134,8 @@ class GatewaySync:
         ruleset=self.cf(token,'GET',phase,allow_missing=True)
         ref='fjordvpn_gateway_'+profile['id']
         rule={'ref':ref,'description':'FjordVPN gateway '+profile['id'],
-              'expression':'http.host in {'+' '.join(json.dumps(d) for d in domains)+'}',
-              'action':'route','action_parameters':{'origin':{'port':port}},'enabled':True}
+              'expression':'http.host in {'+' '.join(json.dumps(d) for d in web_domains)+'}' if web_domains else 'false',
+              'action':'route','action_parameters':{'origin':{'port':port}},'enabled':bool(web_domains)}
         with self.store.lock:
             self.current(profile,observed)
             if ruleset is None:
@@ -133,14 +151,26 @@ class GatewaySync:
                         self.cf(token,'PATCH',path+'/'+owned[0]['id'],json=rule)
                 else:
                     self.cf(token,'POST',path,json=rule)
-        for domain,record in zip(domains,records):
-            payload={'type':'A','name':domain,'content':str(address),'proxied':True,'ttl':1}
-            if record and record.get('content')==str(address) and record.get('proxied') is True:
+        for row,record in zip(config['routes'],records):
+            if row.get('fjordflix') and stream_error:
+                continue
+            proxied=not row.get('fjordflix',False)
+            payload={'type':'A','name':row['domain'],'content':str(address),'proxied':proxied,'ttl':1 if proxied else 60}
+            if record and record.get('content')==str(address) and record.get('proxied') is proxied:
                 continue
             with self.store.lock:
                 self.current(profile,observed)
                 self.cf(token,'PATCH' if record else 'POST',zone+'/dns_records'+('/'+record['id'] if record else ''),json=payload)
-        return ['https://'+d for d in domains]
+        if stream_error:
+            raise stream_error
+        urls=[]
+        for row in config['routes']:
+            if row.get('fjordflix'):
+                url=self.stream.verify_stream(row['domain'],port,lambda:self.current(profile,observed),stream_state)
+                urls.append(url)
+            else:
+                urls.append('https://'+row['domain'])
+        return urls
 
     def tick(self):
         for profile in self.store.all():
@@ -158,7 +188,8 @@ class GatewaySync:
                 if observed['state']!='online' or not observed.get('relay_active'):
                     raise ValueError('Afventer VPN og gateway. HTTPS-certifikater oprettes automatisk.')
                 urls=self.sync(profile,observed)
-                self.statuses[ident]={'ok':True,'message':'DNS og HTTPS-port er ajour. Certifikater kan være under oprettelse.','urls':urls}
+                message='DNS, HTTPS-port og FjordFlix-streamadresse er ajour.' if any(r.get('fjordflix') for r in profile['gateway']['routes']) else 'DNS og HTTPS-port er ajour. Certifikater kan være under oprettelse.'
+                self.statuses[ident]={'ok':True,'message':message,'urls':urls}
             except ValueError as exc:
                 self.statuses[ident]={'ok':False,'message':str(exc) if not isinstance(exc,json.JSONDecodeError) else 'Ugyldigt svar fra Cloudflare.'}
             except Exception:

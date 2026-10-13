@@ -140,6 +140,50 @@ afvises; ingen konkurrerende records slettes.
 7. Behold testnavne, til du har verificeret alt. Migrering af rigtige navne og
    den eksisterende FjordFlix-streamadresse er et separat trin.
 
+## 9. Saml FjordFlix-web og direkte video på gatewayens VPN
+
+Gatewayindstillinger har nu et valg på hvert subdomæne:
+**Direkte FjordFlix-streaming og automatisk streamport**. Brug det kun på
+media-domænet. Der kan kun være én profil, som opdaterer FjordFlix-streamadressen.
+
+For den eksisterende installation:
+
+1. Opdatér FjordVPN via FjordHub til udgaven med streaming i gatewayen.
+   Manageropdateringen kan kort afbryde administrerede VPN-forbindelser.
+2. Behold `film.gleruphub.dk → HTTP → 192.168.1.110:8097` i gatewayen med
+   streamingvalget slået fra. Den bruger Cloudflare-proxy og HTTPS uden port.
+3. Åbn **Indstillinger** på den gamle FjordFlix-VPN og slå **Hold dette domænes
+   IP opdateret** fra. Gem. Lad selve VPN'en køre til rollback; den må ikke
+   konkurrere med gatewayen om DNS eller FjordFlix-streamadressen.
+4. Tilføj `media.gleruphub.dk → HTTP → 192.168.1.110:8097` i gatewayen,
+   og slå **Direkte FjordFlix-streaming og automatisk streamport** til på dette
+   domæne. Lad gatewayens automatiske IP/portopdatering være slået til. Gem.
+5. Gatewayen ændrer media-domænets eksisterende A-record til sin egen VPN-IP
+   med **DNS only / grå sky**, udsteder/fornyer HTTPS-certifikatet og tester
+   `/media/connection-check` med FjordFlix' midlertidige nonce. Når testen lykkes,
+   sættes streamadressen til `https://media.gleruphub.dk:<gatewayens VPN-port>`.
+   Hjemmesidens adresse beholdes. DNS/cache og certifikater kan give en kort
+   afbrydelse; fejlet test beholder den hidtidige FjordFlix-streamadresse.
+6. Vent på **DNS, HTTPS-port og FjordFlix-streamadresse er ajour**, genindlæs
+   FjordFlix, og test login og videoafspilning fra mobildata. Først derefter kan
+   den gamle FjordFlix-VPN slukkes. Seedbox-VPN'en er en separat forbindelse.
+
+Begge FjordFlix-domæner deler nu én VPN-konfiguration og én indgående port.
+Kun webdomæner indgår i Cloudflares Origin Rule. Direkte video går uden om
+Cloudflare-proxyen og bruger portnummer i streamadressen; porten gemmes ikke
+i A-recorden. Gatewayen tillader kun `/media/*` på streamingdomænet.
+Lokalt mål er FjordFlix-appen på port 8097, ikke den gamle HTTPS-relay på 443.
+
+Ved genforbindelse opdateres DNS og streamport automatisk efter en ny verificeret
+HTTPS-test. Hvis automatikken slås fra, stopper disse opdateringer, mens
+certifikatfornyelse fortsætter. FjordFlix skal allerede have det valgte
+media-domæne og en HTTPS-webadresse opsat; gatewayen overtager ikke et andet
+streamdomæne uden at du først ændrer opsætningen i FjordHub.
+
+Rollback: fjern media-ruten fra gatewayen, genaktivér den gamle FjordFlix-VPNs
+automatiske DNS/streamsynkronisering, og vent på dens godkendte forbindelsestest.
+DNS-recorden slettes ikke, når en gatewayrute fjernes.
+
 Ved fejl: kontrollér korrekt Cloudflare-zone, tokenrettigheder, HTTP/HTTPS-valg,
 lokalt mål og tilladte værtsnavne. En gateway viser Online før alle certifikater
 nødvendigvis er udstedt. Stop af gatewayen sletter ikke DNS eller Origin Rules.
