@@ -13,6 +13,7 @@ with tempfile.TemporaryDirectory() as folder:
     old=store.create({'name':'Seedbox'},config(1));store.power(old['id'],True)
     before=(store.directory(old['id'])/'profile.json').read_bytes()
     key=store.save_key({'name':'Example zone','zone_id':'a'*32,'token':'a'*40})
+    mc_key=store.save_key({'name':'Minecraft zone','zone_id':'c'*32,'token':'c'*40})
     server=make_server('127.0.0.1',0,app,threaded=True);threading.Thread(target=server.serve_forever,daemon=True).start()
     try:
         with sync_playwright() as p:
@@ -29,6 +30,12 @@ with tempfile.TemporaryDirectory() as folder:
             page.locator('#gateway-name').fill('Mine webapps')
             page.locator('#gateway-file').set_input_files({'name':'gateway.conf','mimeType':'text/plain','buffer':config(2)})
             page.locator('#gateway-key').select_option(key)
+            expect(page.locator('#gateway-minecraft-fields')).not_to_be_visible()
+            page.locator('#gateway-minecraft-enabled').check()
+            page.locator('#gateway-minecraft-domain').fill('mc.nordprison.dk')
+            page.locator('#gateway-minecraft-host').fill('192.168.1.152')
+            page.locator('#gateway-minecraft-port').fill('25566')
+            page.locator('#gateway-minecraft-key').select_option(mc_key)
             rows=page.locator('.gateway-route');rows.first.locator('[data-gateway-field=domain]').fill('app.example.com')
             rows.first.locator('[data-gateway-field=host]').fill('192.168.1.110')
             rows.first.locator('[data-gateway-field=port]').fill('8099')
@@ -46,6 +53,7 @@ with tempfile.TemporaryDirectory() as folder:
             page.locator('#gateway-save').click();expect(dialog).not_to_be_visible()
             gateways=[v for v in store.all() if v.get('gateway',{}).get('enabled')]
             assert len(gateways)==1 and not gateways[0]['desired'] and len(gateways[0]['gateway']['routes'])==2
+            assert gateways[0]['gateway']['minecraft']=={'enabled':True,'domain':'mc.nordprison.dk','host':'192.168.1.152','port':25566,'key_id':mc_key}
             assert gateways[0]['gateway']['auto_sync'] is False
             assert gateways[0]['gateway']['routes'][1]['fjordflix'] is True
             assert (store.directory(old['id'])/'profile.json').read_bytes()==before
@@ -54,6 +62,7 @@ with tempfile.TemporaryDirectory() as folder:
             card.get_by_role('button',name='Indstillinger',exact=True).click()
             expect(page.locator('#gateway-upload')).not_to_be_visible()
             expect(page.locator('#gateway-auto-sync')).not_to_be_checked()
+            expect(page.locator('#gateway-minecraft-key')).to_have_value(mc_key)
             page.locator('#gateway-auto-sync').check()
             expect(rows).to_have_count(2)
             expect(rows.nth(1).locator('[data-gateway-field=fjordflix]')).to_be_checked()
@@ -61,10 +70,12 @@ with tempfile.TemporaryDirectory() as folder:
             page.locator('#gateway-save').click();expect(dialog).not_to_be_visible()
             assert len(store.get(gateways[0]['id'])['gateway']['routes'])==1
             assert store.get(gateways[0]['id'])['gateway']['auto_sync'] is True
-            page.reload();expect(card).to_contain_text('1 subdomæne')
+            page.reload();expect(card).to_contain_text('2 subdomæner')
+            expect(card).to_contain_text('mc.nordprison.dk · Minecraft Java')
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             # Display three independent route states, with accessible explanations.
             example=store.get(gateways[0]['id'])
+            example['gateway']['minecraft']={'enabled':False}
             example.update(desired=True,state='online',relay_active=True,public_ip='1.1.1.1',public_port=40000)
             example['gateway']['routes']=[{**example['gateway']['routes'][0],'domain':name}
                 for name in ['ready.example.com','pending.example.com','error.example.com']]

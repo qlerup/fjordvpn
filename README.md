@@ -114,7 +114,14 @@ separat VPN til torrent-download/upload. FjordFlix' eksisterende direkte
 streamingopsætning kan fortsætte på sin nuværende profil; den flyttes ikke
 automatisk til Cloudflare-proxyen.
 
-Docker-imaget indeholder Caddy 2.11.4 med Cloudflare-modulet 0.2.4.
+Gatewayens særskilte **Minecraft Java**-indstilling sender spiltrafik til én
+lokal Java-server gennem samme VPN-IP og port som HTTPS. Minecraft kan bruge
+en anden Cloudflare-zone med sin egen gemte nøgle (DNS Edit og Zone Read).
+Automatikken opretter/opdaterer DNS-only A og Minecraft-SRV og kontrollerer
+serverens offentlige statussvar. Bedrock/UDP understøttes ikke.
+
+Docker-imaget indeholder Caddy 2.11.4 med Cloudflare-modulet 0.2.4 og
+caddy-l4 0.1.2 til deling af porten mellem HTTPS og Minecraft Java.
 Ved systemd-drift skal dette image først bygges som `fjordvpn-app:local`,
 eller vælges med `FJORDVPN_GATEWAY_IMAGE`; gamle TCP-relays bruger fortsat deres
 eksisterende relay-image. En normal opdatering af den eksisterende manager

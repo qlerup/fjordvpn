@@ -135,3 +135,28 @@ including forged forwarding headers and SNI/Host mixing; the direct media
 connection check returned 200 and media root returned 404. Actual authenticated
 video playback remains the user's normal application check. Reverting to the
 old image would remove this protection on observer recreation.
+
+
+## Minecraft Java sharing the gateway (2026-10-13)
+
+One opt-in Java TCP target shares the HTTPS VPN port via caddy-l4 0.1.2.
+A separate zone-scoped DNS Edit/Zone Read key supports a Minecraft domain in
+another zone. DNS-only A and SRV records follow the current endpoint; owned
+unchanged records are removed when Minecraft is disabled. Website records and
+web Origin Rules are preserved. No Bedrock/UDP or PROXY protocol is provided.
+
+106 Python tests passed, plus the desktop/mobile gateway browser suite and
+an isolated read-only/capability-restricted real Caddy test sharing one port
+between HTTPS and Java. TLS recognition checks record version bytes too:
+a Java handshake for mc.nordprison.dk starts with 0x16 just like TLS, and the
+container regression test uses that exact hostname. Source-IP web guards,
+forged-header rejection, media restrictions and unknown hosts remain tested.
+
+Live Java status at mc.nordprison.dk returned Paper 1.16.5/protocol 754 through
+the gateway, while film and media returned HTTP 200 and direct web access 403.
+The old Minecraft VPN was left running with its competing DNS updater disabled.
+Manager and observer used the same corrected image; existing VPN containers
+were not restarted during this deployment. Player login/gameplay remains a
+manual check. A subsequent user update from the previous GitHub revision
+replaced the live image; saved Minecraft settings remained intact. This commit
+makes the tested implementation available to normal FjordHub updates.

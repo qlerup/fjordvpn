@@ -60,7 +60,8 @@ class Store:
                 raise ValueError('Indtast et gyldigt Cloudflare Zone ID.')
             if not isinstance(token, str) or not re.fullmatch('[A-Za-z0-9_-]{20,256}', token):
                 raise ValueError('Indtast et gyldigt Cloudflare API-token.')
-            if old and old['zone_id'] != zone and any(p.get('stream_sync', {}).get('key_id') == ident or p.get('gateway',{}).get('key_id')==ident for p in self.all()):
+            if old and old['zone_id'] != zone and any(p.get('stream_sync', {}).get('key_id') == ident or p.get('gateway',{}).get('key_id')==ident
+                    or p.get('gateway',{}).get('minecraft',{}).get('key_id')==ident for p in self.all()):
                 raise ValueError('Nøglen bruges af en VPN. Opret en ny nøgle for en anden zone.')
             ident = ident or uuid.uuid4().hex
             atomic(self.key_path(ident), json.dumps(dict(id=ident, name=name, zone_id=zone, token=token)))
@@ -110,7 +111,7 @@ class Store:
             'enabled': profile['relay_enabled'], 'revision': profile['revision']}
         gateway=profile.get('gateway',{})
         if gateway.get('enabled'):
-            relay.update(enabled=True,mode='gateway',routes=gateway['routes'])
+            relay.update(enabled=True,mode='gateway',routes=gateway['routes'],minecraft=gateway.get('minecraft',{'enabled':False}))
             atomic(folder/'relay/gateway-token',self.key(gateway['key_id'])['token'])
         atomic(folder / 'relay' / 'settings.json', json.dumps(relay))
 
@@ -137,11 +138,17 @@ class Store:
             raise ValueError('Gatewayen bruger sin egen HTTPS-fordeling. TCP-relay og streamsynkronisering skal være slået fra.')
         self.key(config['key_id'])
         domains={r['domain'] for r in config['routes']}
+        mc=config.get('minecraft',{})
+        if mc.get('enabled'):
+            self.key(mc['key_id']);domains.add(mc['domain'])
         flix=any(r.get('fjordflix') for r in config['routes'])
         for other in self.all():
             if other['id']==previous.get('id'):
                 continue
             used={r['domain'] for r in other.get('gateway',{}).get('routes',[])}
+            other_mc=other.get('gateway',{}).get('minecraft',{})
+            if other_mc.get('enabled'):
+                used.add(other_mc['domain'])
             if other.get('stream_sync',{}).get('enabled'):
                 used.add(other['stream_sync']['domain'])
             if domains & used:
@@ -172,6 +179,9 @@ class Store:
             if config.get('fjordflix', True) and not data.get('relay_enabled'):
                 raise ValueError('TCP-videresendelse skal være aktiv for automatisk streaming.')
             for other in self.all():
+                other_mc=other.get('gateway',{}).get('minecraft',{})
+                if other['id']!=previous.get('id') and other_mc.get('enabled') and other_mc['domain']==config['domain']:
+                    raise ValueError('Domænet styres allerede af gatewayens Minecraft-forbindelse.')
                 if (other['id']!=previous.get('id') and config.get('fjordflix',True)
                         and any(r.get('fjordflix') for r in other.get('gateway',{}).get('routes',[]))):
                     raise ValueError('FjordFlix-streamadressen styres allerede af en VPN-gateway.')
@@ -232,6 +242,15 @@ class Store:
                         entry={'domain':row['domain'],'zone_id':old_zone,'key_id':old_gateway['key_id']}
                         if entry not in state['pending']:
                             state['pending'].append(entry)
+                old_mc=old_gateway.get('minecraft',{});new_mc=gateway.get('minecraft',{})
+                if old_mc.get('enabled'):
+                    mc_zone=self.key(old_mc['key_id'])['zone_id']
+                    if not (new_mc.get('enabled') and new_mc['domain']==old_mc['domain']
+                            and self.key(new_mc['key_id'])['zone_id']==mc_zone):
+                        for name in [old_mc['domain'],'_minecraft._tcp.'+old_mc['domain']]:
+                            entry={'domain':name,'zone_id':mc_zone,'key_id':old_mc['key_id']}
+                            if entry not in state['pending']:
+                                state['pending'].append(entry)
                 self.save_gateway_dns(ident,state)
             return p
 

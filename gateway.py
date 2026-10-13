@@ -7,6 +7,7 @@ import time
 import requests
 from configuration import validate_target
 from stream_sync import StreamSync,StreamPending
+from minecraft_gateway import public_probe
 
 
 DOMAIN = re.compile(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}')
@@ -63,10 +64,23 @@ def settings(value, networks):
                        'protocol':protocol,'tls_server_name':server_name,'fjordflix':flix})
     if sum(r['fjordflix'] for r in result)>1:
         raise ValueError('Kun ét domæne kan styre FjordFlix-streamadressen.')
-    return {'enabled':True,'key_id':key,'routes':result,'auto_sync':auto}
+    minecraft=value.get('minecraft',{'enabled':False})
+    if not isinstance(minecraft,dict) or type(minecraft.get('enabled')) is not bool:
+        raise ValueError('Vælg om Minecraft Java skal bruge gatewayen.')
+    mc={'enabled':False}
+    if minecraft['enabled']:
+        domain=hostname(minecraft.get('domain'))
+        if domain in seen:
+            raise ValueError('Minecraft-serveren skal have sit eget DNS-only domæne.')
+        target=validate_target({'name':domain[:64],'host':minecraft.get('host'),'port':minecraft.get('port'),'relay_enabled':True},networks)
+        mc_key=minecraft.get('key_id') or key
+        if not isinstance(mc_key,str) or not re.fullmatch('[a-f0-9]{32}',mc_key):
+            raise ValueError('Vælg en Cloudflare-nøgle til Minecraft-domænet.')
+        mc={'enabled':True,'domain':domain,'host':target['host'],'port':target['port'],'key_id':mc_key}
+    return {'enabled':True,'key_id':key,'routes':result,'auto_sync':auto,'minecraft':mc}
 
 
-def caddy_config(routes,port,token_file='/config/gateway-token',storage='/observed/caddy-data',cloudflare_ranges=None):
+def caddy_config(routes,port,token_file='/config/gateway-token',storage='/observed/caddy-data',cloudflare_ranges=None,minecraft=None):
     """No on-demand TLS, no public admin API, no catch-all upstream."""
     handlers=[]
     for row in routes:
@@ -90,7 +104,7 @@ def caddy_config(routes,port,token_file='/config/gateway-token',storage='/observ
                 {'handle':[proxy]}]}]
         handlers.append({'match':[match],'handle':handle,'terminal':True})
     handlers.append({'handle':[{'handler':'static_response','status_code':404}]})
-    return {'admin':{'disabled':True,'config':{'persist':False}},
+    value={'admin':{'disabled':True,'config':{'persist':False}},
             'storage':{'module':'file_system','root':storage},
             'apps':{'http':{'servers':{'gateway':{'listen':[f':{port}'],
                 'tls_connection_policies':[{}],'automatic_https':{'disable_redirects':True},'routes':handlers}}},
@@ -98,6 +112,19 @@ def caddy_config(routes,port,token_file='/config/gateway-token',storage='/observ
                     'issuers':[{'module':'acme','challenges':{'dns':{
                         'provider':{'name':'cloudflare','api_token':'{file.'+token_file+'}'},
                         'resolvers':['1.1.1.1:53','8.8.8.8:53']}}}]}]}}}}
+    if minecraft and minecraft.get('enabled'):
+        # TLS passes to the existing HTTP listener without a new socket/proxy,
+        # preserving its actual peer address for the Cloudflare-only web gate.
+        # The sole non-TLS TCP target is the explicitly selected Java server.
+        value['apps']['http']['servers']['gateway']['listener_wrappers']=[
+            {'wrapper':'layer4','matching_timeout':5000000000,'routes':[
+                # A Java packet length may also be 0x16. Inspect TLS's version
+                # bytes too, rather than asking the TLS matcher to read an
+                # imaginary multi-kilobyte ClientHello from that Java packet.
+                {'match':[{'not':[{'regexp':{'count':3,'hex':True,'pattern':'^16030[0-4]$'}}]}],
+                 'handle':[{'handler':'proxy','upstreams':[{'dial':[f"{minecraft['host']}:{minecraft['port']}"]}]}]}]},
+            {'wrapper':'tls'}]
+    return value
 
 
 class GatewaySync:
@@ -175,10 +202,14 @@ class GatewaySync:
 
     def remember_record(self,profile,key,record,payload):
         state=self.store.gateway_dns(profile['id'])
-        state['records'][key['zone_id']+':'+payload['name']]={
+        tracked={
             'domain':payload['name'],'zone_id':key['zone_id'],'key_id':key['id'],
-            'id':record['id'],'content':payload['content'],'proxied':payload['proxied'],
-            'comment':payload['comment']}
+            'id':record['id'],'type':payload['type'],'comment':payload['comment']}
+        if payload['type']=='SRV':
+            tracked['data']=payload['data']
+        else:
+            tracked.update(content=payload['content'],proxied=payload['proxied'])
+        state['records'][key['zone_id']+':'+payload['name']]=tracked
         self.store.save_gateway_dns(profile['id'],state)
 
     def cleanup(self,profile):
@@ -189,15 +220,22 @@ class GatewaySync:
             state=self.store.gateway_dns(profile['id'])
             config=profile['gateway'];current_zone=self.store.key(config['key_id'])['zone_id']
             active={(current_zone,r['domain']) for r in config['routes']}
+            active_keys={current_zone:config['key_id']}
+            mc=config.get('minecraft',{})
+            if mc.get('enabled'):
+                mc_zone=self.store.key(mc['key_id'])['zone_id'];active_keys.setdefault(mc_zone,mc['key_id'])
+                active.update({(mc_zone,mc['domain']),(mc_zone,'_minecraft._tcp.'+mc['domain'])})
             candidates={(r['zone_id'],r['domain']):r for r in state['records'].values()
                         if (r['zone_id'],r['domain']) not in active}
             candidates.update({(r['zone_id'],r['domain']):r for r in state['pending']})
             groups={}
             for (zone,domain),candidate in candidates.items():
+                base_domain=domain.removeprefix('_minecraft._tcp.')
                 # Re-adding or handing a hostname to another profile cancels deletion.
                 used=(zone,domain) in active or any(
-                    other['id']!=profile['id'] and (any(r['domain']==domain for r in other.get('gateway',{}).get('routes',[]))
-                    or (other.get('stream_sync',{}).get('enabled') and other['stream_sync']['domain']==domain))
+                    other['id']!=profile['id'] and (any(r['domain']==base_domain for r in other.get('gateway',{}).get('routes',[]))
+                    or (other.get('stream_sync',{}).get('enabled') and other['stream_sync']['domain']==base_domain)
+                    or (other.get('gateway',{}).get('minecraft',{}).get('enabled') and other['gateway']['minecraft']['domain']==base_domain))
                     for other in self.store.all())
                 if (zone,domain) not in active:
                     groups.setdefault(zone,{'key_id':candidate['key_id'],'candidates':[]})
@@ -210,11 +248,13 @@ class GatewaySync:
             self.store.save_gateway_dns(profile['id'],state)
             for zone,group in groups.items():
                 candidates=group['candidates']
-                key=self.store.key(config['key_id'] if zone==current_zone else group['key_id'])
+                key=self.store.key(active_keys.get(zone,group['key_id']))
                 if key['zone_id']!=zone:
                     raise ValueError('Cloudflare-nøglen til oprydning har skiftet zone. Brug den oprindelige zone.')
                 token=key['token'];base='/zones/'+zone
-                ruleset=self.cf(token,'GET',base+'/rulesets/phases/http_request_origin/entrypoint',allow_missing=True)
+                # A separate Minecraft zone requires DNS permissions only.
+                was_web=any(state['records'].get(zone+':'+r['domain'],{}).get('proxied') for r in candidates)
+                ruleset=self.cf(token,'GET',base+'/rulesets/phases/http_request_origin/entrypoint',allow_missing=True) if zone==current_zone or was_web else None
                 owned=[r for r in (ruleset or {}).get('rules',[]) if r.get('ref')=='fjordvpn_gateway_'+profile['id']]
                 if len(owned)>1:
                     raise ValueError('Cloudflare har flere regler for gatewayen. Kontrollér Origin Rules.')
@@ -232,9 +272,13 @@ class GatewaySync:
                     domain=candidate['domain'];ident=zone+':'+domain
                     tracked=state['records'].get(ident)
                     rows=self.cf(token,'GET',base+'/dns_records',params={'name':domain,'per_page':100})
-                    matches=bool(tracked) and len(rows)==1 and all(rows[0].get(k)==v for k,v in {
-                        'id':tracked['id'],'name':domain,'type':'A','content':tracked['content'],
-                        'proxied':tracked['proxied'],'comment':self.record_marker(profile)}.items())
+                    expected={'id':tracked['id'],'name':domain,'type':tracked.get('type','A'),
+                              'comment':self.record_marker(profile)} if tracked else {}
+                    if tracked and tracked.get('type','A')=='A':
+                        expected.update(content=tracked['content'],proxied=tracked['proxied'])
+                    matches=bool(tracked) and len(rows)==1 and all(rows[0].get(k)==v for k,v in expected.items())
+                    if matches and tracked.get('type')=='SRV':
+                        matches=all(rows[0].get('data',{}).get(k)==v for k,v in tracked['data'].items())
                     if matches:
                         self.cf(token,'DELETE',base+'/dns_records/'+tracked['id'],allow_missing=True)
                     elif rows:
@@ -314,27 +358,79 @@ class GatewaySync:
             for row in config['routes']:
                 if not row.get('fjordflix'):
                     route_status[row['domain']]=self.probe_web(profile,observed,row)
+        errors=[]
         if stream_error:
             if route_status is not None:
                 for row in config['routes']:
                     if row.get('fjordflix'):
                         route_status[row['domain']]=self.failure(profile,observed,row,stream_error)
-            raise stream_error
+            errors.append(stream_error)
         urls=[]
         for row in config['routes']:
             if row.get('fjordflix'):
+                if stream_error:
+                    continue
                 try:
                     url=self.stream.verify_stream(row['domain'],port,lambda:self.current(profile,observed),stream_state)
                 except Exception as exc:
                     if route_status is not None:
                         route_status[row['domain']]=self.failure(profile,observed,row,exc)
-                    raise
+                    errors.append(exc);continue
                 if route_status is not None:
                     route_status[row['domain']]={'state':'ready','message':'HTTPS-test godkendt. FjordFlix-streamadressen er opdateret.','url':url}
                 urls.append(url)
             else:
                 urls.append('https://'+row['domain'])
+        mc=config.get('minecraft',{})
+        if mc.get('enabled'):
+            try:
+                version=self.sync_minecraft(profile,observed)
+                if route_status is not None:
+                    route_status[mc['domain']]={'state':'ready','message':'Minecraft Java svarer. DNS og serverport er opdateret.','version':version}
+                urls.append('minecraft://'+mc['domain'])
+            except Exception as exc:
+                if route_status is not None:
+                    route_status[mc['domain']]=self.failure(profile,observed,mc,exc)
+                errors.append(exc)
+        if errors:
+            raise errors[0]
         return urls
+
+    def sync_minecraft(self,profile,observed):
+        mc=profile['gateway']['minecraft'];key=self.store.key(mc['key_id']);token=key['token']
+        zone='/zones/'+key['zone_id'];domain=mc['domain'];name=self.cf(token,'GET',zone)['name'].lower()
+        if domain!=name and not domain.endswith('.'+name):
+            raise ValueError('Minecraft-domænet tilhører ikke den valgte Cloudflare-zone.')
+        srv='_minecraft._tcp.'+domain
+        records=[]
+        for record_name,kind in [(domain,'A'),(srv,'SRV')]:
+            rows=self.cf(token,'GET',zone+'/dns_records',params={'name':record_name,'per_page':100})
+            if len(rows)>1 or any(r.get('type')!=kind or r.get('name','').lower()!=record_name for r in rows):
+                raise ValueError('Minecraft-domænet har konkurrerende DNS-records. Kontrollér A og SRV.')
+            records.append(rows[0] if rows else None)
+        payloads=[{'type':'A','name':domain,'content':observed['public_ip'],'proxied':False,'ttl':60,
+                   'comment':self.record_marker(profile)},
+                  {'type':'SRV','name':srv,'ttl':60,'comment':self.record_marker(profile),
+                   'data':{'priority':0,'weight':0,'port':int(observed['public_port']),'target':domain}}]
+        for record,payload in zip(records,payloads):
+            with self.store.lock:
+                self.current(profile,observed)
+                matches=record and all(record.get(k)==v for k,v in payload.items() if k not in ('ttl','data'))
+                if payload['type']=='SRV':
+                    matches=matches and all(record.get('data',{}).get(k)==v for k,v in payload['data'].items())
+                if not matches:
+                    record=self.cf(token,'PATCH' if record else 'POST',zone+'/dns_records'+('/'+record['id'] if record else ''),json=payload)
+                self.remember_record(profile,key,record,payload)
+        version=public_probe(domain,int(observed['public_port']),observed['public_ip'])
+        with self.store.lock:
+            self.current(profile,observed)
+        return version
+
+    def route_rows(self,profile):
+        rows=list(profile['gateway']['routes']);mc=profile['gateway'].get('minecraft',{})
+        if mc.get('enabled'):
+            rows.append(mc)
+        return rows
 
     def tick(self):
         for profile in self.store.all():
@@ -353,17 +449,17 @@ class GatewaySync:
             routes={};urls=[];error=None
             if not profile['gateway'].get('auto_sync',True):
                 message='Automatisk IP og port er slået fra. Domænernes opsætning er ikke verificeret.'
-                routes={r['domain']:{'state':'pending','message':message} for r in profile['gateway']['routes']}
+                routes={r['domain']:{'state':'pending','message':message} for r in self.route_rows(profile)}
             elif observed.get('state')!='online' or not observed.get('relay_active'):
                 state='error' if observed.get('state')=='error' else 'pending'
                 message=observed.get('message') if state=='error' else 'Afventer VPN og HTTPS-gateway.'
-                routes={r['domain']:{'state':state,'message':message or 'VPN-forbindelsen har en fejl.'} for r in profile['gateway']['routes']}
+                routes={r['domain']:{'state':state,'message':message or 'VPN-forbindelsen har en fejl.'} for r in self.route_rows(profile)}
             else:
                 try:
                     urls=self.sync(profile,observed,routes)
                 except Exception as exc:
                     error=exc
-                for row in profile['gateway']['routes']:
+                for row in self.route_rows(profile):
                     if row['domain'] not in routes:
                         routes[row['domain']]=self.failure(profile,observed,row,error) if error else self.waiting(profile,observed,row['domain'],'Afventer forbindelsestest.')
                 # Do not publish a green result after concurrent editing/reconnection.

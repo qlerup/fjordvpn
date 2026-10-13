@@ -1,4 +1,6 @@
 let editingGateway=null;
+function gatewayMinecraftFields(){const enabled=$('#gateway-minecraft-enabled').checked;$('#gateway-minecraft-fields').hidden=!enabled;$('#gateway-minecraft-fields').disabled=!enabled;}
+$('#gateway-minecraft-enabled').onchange=gatewayMinecraftFields;
 function gatewayRoute(row={}){
  const card=el('div','gateway-route');
  const top=el('div','gateway-route-heading'),title=el('strong','','Subdomæne og lokalt mål'),remove=el('button','text-button','Fjern mål');
@@ -29,6 +31,11 @@ async function openGatewayForm(profile=null){
  $('#gateway-auto-sync').checked=profile?.gateway?.auto_sync??true;
  $('#gateway-key').replaceChildren(el('option','','Vælg en nøgle'),...cloudflareKeys.map(key=>{const option=el('option','',key.name);option.value=key.id;return option;}));
  $('#gateway-key').firstChild.value='';$('#gateway-key').value=profile?.gateway?.key_id||'';
+ const mc=profile?.gateway?.minecraft||{};
+ $('#gateway-minecraft-enabled').checked=!!mc.enabled;
+ $('#gateway-minecraft-domain').value=mc.domain||'';$('#gateway-minecraft-host').value=mc.host||'';$('#gateway-minecraft-port').value=mc.port??25565;
+ $('#gateway-minecraft-key').replaceChildren(el('option','','Brug gatewayens nøgle'),...cloudflareKeys.map(key=>{const option=el('option','',key.name);option.value=key.id;return option;}));
+ $('#gateway-minecraft-key').firstChild.value='';$('#gateway-minecraft-key').value=mc.key_id||'';gatewayMinecraftFields();
  $('#gateway-routes').replaceChildren(...(profile?.gateway?.routes||[{}]).map(gatewayRoute));
  $('#gateway-save').textContent=profile?'Gem gateway':'Opret gateway';
  $('#gateway-dialog').showModal();$('#gateway-name').focus();
@@ -45,7 +52,9 @@ $('#gateway-form').onsubmit=async event=>{
   values.port=Number(values.port);return values;
  });
  const values={name:$('#gateway-name').value,host:'',port:null,relay_enabled:false,
-  gateway:{enabled:true,key_id:$('#gateway-key').value,auto_sync:$('#gateway-auto-sync').checked,routes},start:$('#gateway-start').checked};
+  gateway:{enabled:true,key_id:$('#gateway-key').value,auto_sync:$('#gateway-auto-sync').checked,routes,
+   minecraft:{enabled:$('#gateway-minecraft-enabled').checked,domain:$('#gateway-minecraft-domain').value,
+    host:$('#gateway-minecraft-host').value,port:Number($('#gateway-minecraft-port').value),key_id:$('#gateway-minecraft-key').value}},start:$('#gateway-start').checked};
  try{
   if(editingGateway){await api(`/api/profiles/${editingGateway.id}/settings`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});}
   else{const body=new FormData();body.set('settings',JSON.stringify(values));body.set('config',$('#gateway-file').files[0]);await api('/api/gateways',{method:'POST',body});}

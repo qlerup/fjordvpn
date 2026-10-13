@@ -1,5 +1,5 @@
 FROM caddy:2.11.4-builder-alpine AS gateway-builder
-RUN xcaddy build v2.11.4 --with github.com/caddy-dns/cloudflare@v0.2.4
+RUN xcaddy build v2.11.4 --with github.com/caddy-dns/cloudflare@v0.2.4 --with github.com/mholt/caddy-l4@v0.1.2
 
 FROM python:3.13-alpine
 COPY --from=gateway-builder /usr/bin/caddy /usr/bin/caddy
@@ -10,7 +10,7 @@ RUN apk add --no-cache socat
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app.py configuration.py hub.py runtime.py store.py stream_sync.py gateway.py ./
+COPY app.py configuration.py hub.py runtime.py store.py stream_sync.py gateway.py minecraft_gateway.py ./
 COPY seedbox_export.py ./
 COPY relay ./relay
 COPY templates ./templates

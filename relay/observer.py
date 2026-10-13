@@ -155,10 +155,11 @@ def observe():
                         if settings['enabled']:
                             if settings.get('mode')=='gateway':
                                 from gateway import settings as validate_gateway
-                                validated=validate_gateway({'enabled':True,'key_id':'0'*32,'routes':settings['routes']},networks)
+                                validated=validate_gateway({'enabled':True,'key_id':'0'*32,'routes':settings['routes'],
+                                    'minecraft':settings.get('minecraft',{'enabled':False})},networks)
                                 token=Path('/config/gateway-token').read_bytes()
                                 wanted=('gateway',port,json.dumps(validated['routes'],sort_keys=True),
-                                        settings['revision'],hashlib.sha256(token).hexdigest())
+                                        settings['revision'],hashlib.sha256(token).hexdigest(),json.dumps(validated['minecraft'],sort_keys=True))
                             else:
                                 target = ipaddress.IPv4Address(settings['host'])
                                 target_port = settings['port']
@@ -172,7 +173,7 @@ def observe():
                 if wanted:
                     if wanted[0]=='gateway':
                         from gateway import caddy_config
-                        config=caddy_config(json.loads(wanted[2]),wanted[1])
+                        config=caddy_config(json.loads(wanted[2]),wanted[1],minecraft=json.loads(wanted[5]))
                         path=Path('/observed/caddy.json')
                         path.write_text(json.dumps(config));path.chmod(0o600)
                         command=['caddy','run','--config',str(path)]

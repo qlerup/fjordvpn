@@ -16,16 +16,17 @@ function card(p,legacy=false){
  const targetRow=el('div','target-row'),target=el('div');target.append(el('p','label','Lokalt mål'),el('p','target',p.host&&p.port?`${p.host}:${p.port}`:'Intet mål valgt'));targetRow.append(target,el('span','small muted',p.relay_active?'TCP aktiv':legacy?'Eksisterende opsætning':p.relay_enabled?'TCP afventer':'TCP slået fra'));main.append(targetRow);
  if(p.stream_sync?.enabled) main.append(el('p','small '+(p.stream_status?.ok?'':'muted'),p.stream_status?.message||'Automatisk DNS og streamport afventer kontrol.'));
  if(gateway){
-  target.querySelector('.target').textContent=p.gateway.routes.length+(p.gateway.routes.length===1?' subdomæne':' subdomæner');targetRow.lastChild.textContent=p.relay_active?'HTTPS aktiv':'HTTPS afventer';
+  const mc=p.gateway.minecraft,routeRows=[...p.gateway.routes,...(mc?.enabled?[{...mc,minecraft:true}]:[])];
+  target.querySelector('.target').textContent=routeRows.length+(routeRows.length===1?' subdomæne':' subdomæner');targetRow.lastChild.textContent=p.relay_active?(mc?.enabled?'HTTPS + Minecraft aktiv':'HTTPS aktiv'):'Gateway afventer';
   const runtimeError=p.state==='error',available=p.desired&&p.state==='online'&&p.relay_active;
   const checks=available?(p.gateway_status?.routes||{}):{};
-  for(const route of p.gateway.routes){
+  for(const route of routeRows){
    const check=checks[route.domain]||{state:runtimeError?'error':'pending',message:runtimeError?(p.message||'VPN-forbindelsen har en fejl.'):p.desired?'Afventer VPN, DNS og HTTPS-test.':'Gatewayen er slukket.'};
    const state=['ready','pending','error'].includes(check.state)?check.state:'pending';
    const label={ready:'Online',pending:'Opsætter',error:'Fejl'}[state],name=el('span','gateway-route-name');
    const dot=el('span','route-status-dot is-'+state);dot.setAttribute('role','img');dot.setAttribute('aria-label',label+': '+check.message);dot.title=label+': '+check.message;dot.tabIndex=0;
-   name.append(dot,el('span','',route.domain+(route.fjordflix?' · Direkte stream'+(p.public_port?' :'+p.public_port:''):'')));
-   const item=el('div','gateway-card-route');item.append(name,el('span','small muted',`${route.protocol}://${route.host}:${route.port}`));
+   name.append(dot,el('span','',route.domain+(route.minecraft?' · Minecraft Java':route.fjordflix?' · Direkte stream'+(p.public_port?' :'+p.public_port:''):'')));
+   const item=el('div','gateway-card-route');item.append(name,el('span','small muted',`${route.minecraft?'tcp':route.protocol}://${route.host}:${route.port}`));
    if(state!=='ready')item.append(el('span','gateway-route-check small '+(state==='error'?'route-error':'muted'),(p.desired?label+': ':'')+check.message));
    main.append(item);
   }

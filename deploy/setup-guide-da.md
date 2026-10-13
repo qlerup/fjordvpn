@@ -19,14 +19,15 @@ opdateringen. Derefter kan nye testprofiler oprettes uden at flytte de gamle.
 | FjordSeed webside og andre webapps | Ny VPN-gateway | Adgang til websiden udefra |
 | FjordFlix eksisterende streaming | Behold den eksisterende FjordFlix-VPN | Den nuværende direkte streamingforbindelse |
 | Minecraft-hjemmeside | Ny VPN-gateway på Minecraft-domænet | HTTP/HTTPS til hjemmesiden |
-| Minecraft Java-server | Ny VPN med TCP-videresendelse og Minecraft-SRV | Spilforbindelsen |
+| Minecraft Java-server | Gatewayens Minecraft Java-indstilling eller separat TCP-profil | Spilforbindelsen |
 
 En web-gateway ændrer ikke de lokale serveres almindelige internettrafik.
 Torrentklienten og web-gatewayen kan ikke dele den ene tildelte Proton-port.
 Minecraft-spiltrafik er ikke HTTP og skal derfor ikke tilføjes som et webmål.
 Bedrock/UDP understøttes ikke af det nuværende TCP-relay.
 
-**Den nuværende gateway understøtter én Cloudflare-zone ad gangen.** Saml
+**Gatewayens webmål bruger én Cloudflare-zone ad gangen.** Minecraft Java kan
+bruge en anden zone og nøgle på samme gateway; se trin 13. Saml
 webapps under hoveddomænet på én gateway. Minecraft-hjemmesidens andet domæne
 kræver en anden gateway og nøgle/Zone ID. De to gateways har hver sin nye
 Proton-konfiguration og kan have forskellige offentlige IP-adresser.
@@ -108,7 +109,7 @@ Tilføj fx `www-test.minecraftdomaene.dk → HTTP → lokal Minecraft-web-IP:por
 Brug hjemmesidens webport, ikke spilserverens port 25565.
 Lad automatikken være slået til på denne gateway også.
 
-## 7. Minecraft Java-server med automatisk IP og spilport
+## 7. Alternativ: separat Minecraft Java-VPN med automatisk IP og spilport
 
 Brug en ny testprofil; ændr ikke din nuværende Minecraft-installation under testen.
 
@@ -250,3 +251,42 @@ og [IPv6-liste](https://www.cloudflare.com/ips-v6), kontrolleret 2026-10-13.
 Listen skal opdateres i appen, hvis Cloudflare ændrer sine origin-netværk.
 Det er en afgrænsning af webadgang, ikke en netværksmæssig blokering af direkte
 trafik til media-porten.
+
+
+## 13. Minecraft Java på samme VPN som web og media
+
+Åbn gatewayens **Indstillinger**, og aktivér den særskilte **Minecraft Java**-del.
+Minecraft skal ikke tilføjes som et HTTP/HTTPS-webmål.
+
+For denne installation:
+
+- Domæne: `mc.nordprison.dk`.
+- Lokal IP: `192.168.1.152`.
+- Lokal port: `25566` (Paper 1.16.5).
+- Cloudflare-nøgle: `NordPrison Minecraft`, med nordprison.dk's Zone ID og
+  rettighederne Zone / DNS / Edit og Zone / Zone / Read.
+
+Behold **Opdater automatisk IP og port** slået til, og tryk **Gem gateway**.
+Slå den gamle Minecraft-VPNs automatiske DNS-opdatering fra før overtagelsen,
+så de to forbindelser ikke ændrer samme domæne. Den gamle VPN kan beholdes som
+fallback, mens du tester.
+
+Gatewayen opretter/opdaterer en DNS-only A-record for `mc.nordprison.dk` og
+SRV-recorden `_minecraft._tcp.mc.nordprison.dk`. SRV peger på `mc.nordprison.dk`
+med gatewayens aktuelle Proton-port. Ved IP/portændring opdateres begge automatisk.
+Nordprison-hjemmesiden og andre DNS-navne berøres ikke. Minecraft kræver ingen
+Origin Rule eller HTTPS-certifikat. Film og media beholder deres HTTPS-ruter.
+
+Vent på grøn prik. Java-klienten skal derefter forbinde til **mc.nordprison.dk**
+uden portnummer; klienten finder porten via SRV. Statuskontrollen tester Java-
+serverens offentlige svar, men ikke login eller spil i verdenen. Test derfor
+selv med en klient til 1.16.5, før den gamle VPN slukkes.
+
+Der understøttes én Java-server pr. gateway. Bedrock/UDP understøttes ikke.
+Serveren ser gatewayens lokale afsenderadresse; PROXY protocol sendes ikke.
+Webdomænernes kontrol af Cloudflare-afsenderen gælder fortsat.
+
+Hvis Minecraft fravælges og gatewayen gemmes, rydder automatisk synkronisering
+dens uændrede ejede A- og SRV-records op. Stop alene beholder DNS. Ved rollback
+skal den gamle DNS-opsætning gendannes og dens updater genaktiveres, efter at
+gatewayens Minecraft-del er deaktiveret.

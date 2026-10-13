@@ -1,8 +1,9 @@
 """Run inside the built image with --network none and disposable TLS fixtures."""
-import json,ssl,socket,subprocess,tempfile,threading,time
+import json,ssl,socket,socketserver,subprocess,tempfile,threading,time
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler,HTTPServer
 from gateway import caddy_config
+from minecraft_gateway import probe,read_varint,read_exact,varint
 
 
 routes=[{'domain':'app.example.com','host':'127.0.0.1','port':8201,'protocol':'http'},
@@ -10,7 +11,7 @@ routes=[{'domain':'app.example.com','host':'127.0.0.1','port':8201,'protocol':'h
 with tempfile.TemporaryDirectory() as folder:
     root=Path(folder)
     token=root/'token';token.write_text('a'*40)
-    value=caddy_config(routes,8443,str(token),str(root/'storage'),cloudflare_ranges=['127.0.0.2/32'])
+    value=caddy_config(routes,8443,str(token),str(root/'storage'),cloudflare_ranges=['127.0.0.2/32'],minecraft={'enabled':True,'host':'127.0.0.1','port':8255})
     config=root/'caddy.json';config.write_text(json.dumps(value))
     subprocess.run(['caddy','validate','--config',str(config)],check=True,capture_output=True)
     # Replace public ACME with a short-lived fixture cert for the isolated test.
@@ -27,6 +28,17 @@ with tempfile.TemporaryDirectory() as folder:
             def log_message(self,*args):pass
         server=HTTPServer(('127.0.0.1',port),Handler);servers.append(server)
         threading.Thread(target=server.serve_forever,daemon=True).start()
+    class MinecraftHandler(socketserver.BaseRequestHandler):
+        def handle(self):
+            self.request.settimeout(3)
+            packet=read_exact(self.request,read_varint(self.request))
+            assert packet[0]==0 and b'mc.nordprison.dk' in packet
+            assert read_exact(self.request,read_varint(self.request))==b'\x00'
+            body=json.dumps({'version':{'name':'Test Paper 1.16.5','protocol':754}}).encode()
+            response=b'\x00'+varint(len(body))+body
+            self.request.sendall(varint(len(response))+response)
+    minecraft_server=socketserver.ThreadingTCPServer(('127.0.0.1',8255),MinecraftHandler)
+    threading.Thread(target=minecraft_server.serve_forever,daemon=True).start()
     process=subprocess.Popen(['caddy','run','--config',str(config)],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:
         context=ssl.create_default_context(cafile='/test/cert.pem')
@@ -58,7 +70,9 @@ with tempfile.TemporaryDirectory() as folder:
         unknown=get('app.example.com',host='unconfigured.example.com')
         assert '404' in unknown.splitlines()[0] or '421' in unknown.splitlines()[0],unknown
         assert 'FIRST' not in unknown and 'SECOND' not in unknown
-        print('PASS: built Caddy + Cloudflare module, trusted TLS, hostname routes, original Host/path, forwarded HTTPS, unknown-host rejection; web source-IP restriction, forged-header/SNI bypass rejection, direct media preserved.')
+        assert probe('127.0.0.1',8443,'mc.nordprison.dk')=={'name':'Test Paper 1.16.5','protocol':754}
+        print('PASS: built Caddy + Cloudflare module, trusted TLS, hostname routes, original Host/path, forwarded HTTPS, unknown-host rejection; web source-IP restriction, forged-header/SNI bypass rejection, direct media preserved; Minecraft Java on the same port.')
     finally:
         process.terminate();process.wait(5)
+        minecraft_server.shutdown();minecraft_server.server_close()
         for server in servers:server.shutdown()
