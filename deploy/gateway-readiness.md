@@ -44,3 +44,21 @@ the gateway's own `fjordvpn_gateway_<profile-id>` rule and its selected A-record
 Do not roll back the manager while a new gateway is expected to remain active;
 older observers cannot serve the gateway mode. Legacy profile schemas were not
 migrated, and their original relay paths remain compatible.
+
+## Live gateway follow-up (2026-10-13)
+
+The user subsequently activated a separate gateway for two test hostnames.
+Its observer initially failed to execute Caddy with EPERM: the executable's
+`security.capability` attribute conflicted with the observer's dropped capabilities.
+The Dockerfile now removes that attribute; high forwarded ports need no bind
+capability. A derived image with the same fix passed the routing/TLS container
+test with a read-only root filesystem, `--cap-drop ALL`,
+`--security-opt no-new-privileges:true` and `--network none`.
+
+Only the new gateway observer was replaced with that image. Existing Seedbox
+and FjordFlix VPN containers remained running. The gateway became online, but
+Cloudflare synchronization remains blocked: zone and DNS reads succeeded,
+while the Origin Rules entrypoint returned HTTP 403 (code 10000). A zone-scoped
+token with Origin Rules Edit is required before public DNS/HTTPS verification.
+The manager must be updated to this Dockerfile before recreating the gateway
+observer, so subsequent starts also use the permanent capability fix.

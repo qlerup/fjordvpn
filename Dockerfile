@@ -3,6 +3,9 @@ RUN xcaddy build v2.11.4 --with github.com/caddy-dns/cloudflare@v0.2.4
 
 FROM python:3.13-alpine
 COPY --from=gateway-builder /usr/bin/caddy /usr/bin/caddy
+# The observer drops every capability. Caddy's file capability otherwise makes
+# execve fail with EPERM; forwarded high ports need no privileged bind right.
+RUN python -c "import os; p='/usr/bin/caddy'; os.removexattr(p,'security.capability') if 'security.capability' in os.listxattr(p) else None"
 RUN apk add --no-cache socat
 WORKDIR /app
 COPY requirements.txt .
