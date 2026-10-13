@@ -41,8 +41,8 @@ def test_gateway_caddy_routing_tls_and_unknown_host():
     server=value['apps']['http']['servers']['gateway']
     assert server['listen']==[':38850'] and server['tls_connection_policies']==[{}]
     assert server['routes'][0]['match']==[{'host':['app.example.com']}]
-    assert server['routes'][0]['handle'][0]['upstreams']==[{'dial':'192.168.1.110:8099'}]
-    tls=server['routes'][1]['handle'][0]['transport']['tls']
+    assert server['routes'][0]['handle'][0]['routes'][1]['handle'][0]['upstreams']==[{'dial':'192.168.1.110:8099'}]
+    tls=server['routes'][1]['handle'][0]['routes'][1]['handle'][0]['transport']['tls']
     assert tls=={'server_name':'other.example.com'}
     assert server['routes'][-1]['handle'][0]['status_code']==404
     assert TOKEN not in json.dumps(value)

@@ -230,3 +230,23 @@ Cloudflare-kommentar stadig matcher gatewayens registrering. Hvis en record er
 ændret, overtaget af en anden profil eller endnu ikke registreret som ejet,
 bevares den, og kortet forklarer det. Et mål, der tilføjes igen før oprydningen,
 får annulleret sin sletning. Gatewayen skal fortsat have mindst ét mål.
+
+## 12. Webdomæner accepterer kun Cloudflare-forbindelser
+
+Gatewayens almindelige webdomæner accepterer kun HTTP-anmodninger, hvis
+forbindelsens faktiske afsender-IP tilhører Cloudflares offentliggjorte IPv4/IPv6-
+netværk. Direkte HTTPS-adgang til VPN-IP/port med webdomænets Host/SNI giver
+HTTP 403. Headers som `X-Forwarded-For` eller `CF-Connecting-IP` kan ikke give
+adgang. Reglen gælder også efter portskift og genoprettelse af observeren.
+
+Media-domænet bruger samme port og skal fortsat kunne forbindes direkte.
+Derfor kontrolleres afsender-IP på webdomænet i Caddy, ikke med en generel
+blokering af hele VPN-porten. Media videresender fortsat kun `/media/*`, og
+FjordFlix' eksisterende adgangskontrol til videoer gælder. Ukendte domæner
+og media-domænets webroot giver ingen adgang til hjemmesiden.
+
+Listen er indbygget fra [Cloudflares IPv4-liste](https://www.cloudflare.com/ips-v4)
+og [IPv6-liste](https://www.cloudflare.com/ips-v6), kontrolleret 2026-10-13.
+Listen skal opdateres i appen, hvis Cloudflare ændrer sine origin-netværk.
+Det er en afgrænsning af webadgang, ikke en netværksmæssig blokering af direkte
+trafik til media-porten.

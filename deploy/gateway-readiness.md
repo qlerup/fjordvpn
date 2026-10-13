@@ -111,3 +111,27 @@ proxy mode, comment, ID and record type, failed-request/restart recovery,
 re-adding, profile handoff, direct-media-only Origin Rule removal and replacement
 credentials in the same zone. All 95 Python tests and the gateway desktop/mobile
 browser suite passed. No production test domain was deleted during development.
+
+## Cloudflare-only web access (live deployment)
+
+Every web hostname now has a source-IP gate using Caddy's `remote_ip` matcher
+and Cloudflare's published networks. It never authorizes forwarding headers.
+Direct media retains its `/media/*` route on the shared port. The isolated
+read-only/capability-restricted Caddy test verifies allowed and denied peers,
+forged headers, mismatched SNI/Host, media connectivity and root rejection.
+All 95 Python tests passed with the guarded configuration.
+
+The change was deployed to the live manager and gateway observer using a derived
+image of the existing release, changing only gateway.py. The old manager was
+terminated without its normal VPN shutdown hook; Docker settings, mounts,
+labels, network aliases, health check and restart policy were preserved. VPN
+container start times remained unchanged. The replacement manager and observer
+use the same new image, so observer recreation retains enforcement. Stopped
+replacement containers were removed after verification; the original manager
+configuration is backed up in the host's protected temporary deployment folder.
+
+Live checks: HTTPS via Cloudflare returned 200; direct web access returned 403,
+including forged forwarding headers and SNI/Host mixing; the direct media
+connection check returned 200 and media root returned 404. Actual authenticated
+video playback remains the user's normal application check. Reverting to the
+old image would remove this protection on observer recreation.

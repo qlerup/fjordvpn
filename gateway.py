@@ -11,6 +11,16 @@ from stream_sync import StreamSync,StreamPending
 
 DOMAIN = re.compile(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}')
 
+# Cloudflare's published origin-facing networks, verified 2026-10-13:
+# https://www.cloudflare.com/ips-v4 and https://www.cloudflare.com/ips-v6
+CLOUDFLARE_RANGES=(
+    '173.245.48.0/20','103.21.244.0/22','103.22.200.0/22','103.31.4.0/22',
+    '141.101.64.0/18','108.162.192.0/18','190.93.240.0/20','188.114.96.0/20',
+    '197.234.240.0/22','198.41.128.0/17','162.158.0.0/15','104.16.0.0/13',
+    '104.24.0.0/14','172.64.0.0/13','131.0.72.0/22',
+    '2400:cb00::/32','2606:4700::/32','2803:f800::/32','2405:b500::/32',
+    '2405:8100::/32','2a06:98c0::/29','2c0f:f248::/32')
+
 
 def hostname(value):
     if not isinstance(value, str) or len(value)>253 or not DOMAIN.fullmatch(value.strip().lower()):
@@ -56,7 +66,7 @@ def settings(value, networks):
     return {'enabled':True,'key_id':key,'routes':result,'auto_sync':auto}
 
 
-def caddy_config(routes,port,token_file='/config/gateway-token',storage='/observed/caddy-data'):
+def caddy_config(routes,port,token_file='/config/gateway-token',storage='/observed/caddy-data',cloudflare_ranges=None):
     """No on-demand TLS, no public admin API, no catch-all upstream."""
     handlers=[]
     for row in routes:
@@ -64,9 +74,21 @@ def caddy_config(routes,port,token_file='/config/gateway-token',storage='/observ
         if row['protocol']=='https':
             proxy['transport']={'protocol':'http','tls':{'server_name':row['tls_server_name']}}
         match={'host':[row['domain']]}
+        handle=[proxy]
         if row.get('fjordflix'):
             match['path']=['/media/*']
-        handlers.append({'match':[match],'handle':[proxy],'terminal':True})
+        else:
+            # Authorize the actual socket peer, never a spoofable forwarding header.
+            # The port is shared with direct media, so a global IP firewall would
+            # also break legitimate viewers. Gate only the web hostname here.
+            ranges=list(CLOUDFLARE_RANGES if cloudflare_ranges is None else cloudflare_ranges)
+            if not ranges:
+                raise ValueError('Cloudflare-adgang kræver mindst ét tilladt IP-netværk.')
+            handle=[{'handler':'subroute','routes':[
+                {'match':[{'not':[{'remote_ip':{'ranges':ranges}}]}],
+                 'handle':[{'handler':'static_response','status_code':403}],'terminal':True},
+                {'handle':[proxy]}]}]
+        handlers.append({'match':[match],'handle':handle,'terminal':True})
     handlers.append({'handle':[{'handler':'static_response','status_code':404}]})
     return {'admin':{'disabled':True,'config':{'persist':False}},
             'storage':{'module':'file_system','root':storage},
