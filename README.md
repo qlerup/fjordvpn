@@ -73,6 +73,11 @@ Lad både `FJORDHUB_URL` og `FJORDHUB_API_KEY` være tomme ved selvstændig drif
 
 ### Nye VPN-gateways til flere webapps
 
+Se den danske [opsætnings- og testguide](deploy/setup-guide-da.md) for webapps,
+flere domæner og Minecraft Java. Gatewayens **Opdater automatisk IP og port**
+kan slås til/fra. TCP-profiler kan vælge automatisk Minecraft-SRV-port via
+**Opdater også Minecraft Java-port (SRV)** sammen med automatisk DNS.
+
 **Ny VPN-gateway** ved siden af **Ny VPN** opretter en separat profil med en
 ny Proton-konfiguration. Tilføj op til 25 mål som `app.example.com →
 http://192.168.1.110:8099`. Hvert subdomæne får samme offentlige VPN-IP som

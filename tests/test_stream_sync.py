@@ -113,6 +113,34 @@ def test_offline_does_not_touch_dns_or_stream_settings(app):
     assert 'Afventer' in next(iter(sync.statuses.values()))['message']
 
 
+def test_minecraft_srv_created_and_port_updated_without_other_dns_changes():
+    sync=StreamSync(Mock(),Mock());cfg={'zone_id':'a'*32,'domain':'play.example.com'}
+    sync.cf=Mock(return_value=[]);sync.minecraft(cfg,'secret',40000)
+    body=sync.cf.call_args.kwargs['json']
+    assert body=={'type':'SRV','name':'_minecraft._tcp.play.example.com','ttl':60,
+                 'data':{'priority':0,'weight':0,'port':40000,'target':'play.example.com'}}
+    record={'type':'SRV','name':body['name'],'id':'record','data':body['data']}
+    sync.cf=Mock(return_value=[record]);sync.minecraft(cfg,'secret',40000)
+    assert sync.cf.call_count==1
+    sync.minecraft(cfg,'secret',41000)
+    assert sync.cf.call_args.args[1]=='PATCH' and sync.cf.call_args.kwargs['json']['data']['port']==41000
+    sync.cf=Mock(return_value=[{**record,'data':{**body['data'],'target':'other.example.com'}}])
+    with pytest.raises(ValueError):sync.minecraft(cfg,'secret',41000)
+    assert sync.cf.call_count==1
+
+
+def test_minecraft_mode_requires_relay_and_is_separate_from_flix(app):
+    store=app.extensions['store'];data=options()
+    data['stream_sync'].update(fjordflix=False,minecraft_srv=True)
+    with pytest.raises(ValueError):store.create({**data,'relay_enabled':False},config())
+    profile=store.create(data,config());profile=store.power(profile['id'],True)
+    observed={'state':'online','relay_active':True,'public_ip':'1.1.1.1','public_port':40000}
+    runtime=Mock();runtime.status.return_value=observed
+    sync=StreamSync(store,runtime);sync.dns=Mock();sync.minecraft=Mock();sync.flix=Mock()
+    sync.sync(profile,observed);sync.minecraft.assert_called_once_with(profile['stream_sync'],store.sync_token(profile),40000)
+    sync.flix.assert_not_called()
+
+
 def test_ip_only_change_verifies_without_revoking_existing_streams(app):
     store = app.extensions['store']; profile = store.create(options(), config())
     observed = dict(state='online', relay_active=True, public_ip='1.1.1.1', public_port=40000)

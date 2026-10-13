@@ -22,6 +22,9 @@ def settings(value, networks):
         raise ValueError('Ugyldige gatewayindstillinger.')
     if not value['enabled']:
         return {'enabled': False, 'routes': [], 'key_id': ''}
+    auto=value.get('auto_sync',True)
+    if type(auto) is not bool:
+        raise ValueError('Vælg automatisk IP- og portopdatering.')
     key=value.get('key_id')
     if not isinstance(key,str) or not re.fullmatch('[a-f0-9]{32}',key):
         raise ValueError('Vælg en gemt Cloudflare-nøgle til gatewayen.')
@@ -44,7 +47,7 @@ def settings(value, networks):
         seen.add(domain)
         result.append({'domain':domain,'host':target['host'],'port':target['port'],
                        'protocol':protocol,'tls_server_name':server_name})
-    return {'enabled':True,'key_id':key,'routes':result}
+    return {'enabled':True,'key_id':key,'routes':result,'auto_sync':auto}
 
 
 def caddy_config(routes,port,token_file='/config/gateway-token',storage='/observed/caddy-data'):
@@ -144,6 +147,9 @@ class GatewaySync:
             ident=profile['id']
             if not profile.get('gateway',{}).get('enabled') or not profile['desired']:
                 self.statuses.pop(ident,None);self.next_check.pop(ident,None);continue
+            if not profile['gateway'].get('auto_sync',True):
+                self.statuses[ident]={'ok':True,'message':'Automatisk IP og port er slået fra. Cloudflare skal opdateres manuelt.'}
+                self.next_check.pop(ident,None);continue
             if time.monotonic()<self.next_check.get(ident,0):
                 continue
             self.next_check[ident]=time.monotonic()+30

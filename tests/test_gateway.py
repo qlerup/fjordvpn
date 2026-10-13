@@ -131,3 +131,15 @@ def test_stale_profile_cannot_publish_dns_and_legacy_profiles_are_not_synced(tmp
     assert all(c.args[1]=='GET' for c in sync.cf.call_args_list)
     store.create({'name':'Legacy'},config(2));sync.cf.reset_mock();sync.tick()
     sync.cf.assert_not_called()
+
+
+def test_auto_sync_can_be_disabled_and_reenabled(tmp_path):
+    sync,p,observed,store=fixture_sync(tmp_path)
+    values={'name':p['name'],'gateway':{**p['gateway'],'auto_sync':False}}
+    store.edit(p['id'],values);sync.tick();sync.cf.assert_not_called()
+    values['gateway']['auto_sync']=True;store.edit(p['id'],values)
+    sync.tick();assert sync.cf.called
+
+
+def test_auto_sync_requires_boolean():
+    with pytest.raises(ValueError):settings(gateway(auto_sync='yes'),NETWORKS)

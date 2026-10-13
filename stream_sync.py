@@ -18,6 +18,9 @@ def settings(data, previous, token_exists):
     domain = str(value.get('domain', '')).strip().lower()
     zone = str(value.get('zone_id', '')).strip()
     flix = value.get('fjordflix', previous.get('fjordflix', bool(previous.get('enabled'))))
+    minecraft=value.get('minecraft_srv',previous.get('minecraft_srv',False))
+    if type(minecraft) is not bool or (minecraft and flix):
+        raise ValueError('Vælg enten FjordFlix-port eller Minecraft Java-port.')
     if type(flix) is not bool:
         raise ValueError('Ugyldigt valg af FjordFlix-synkronisering.')
     if value['enabled']:
@@ -29,7 +32,12 @@ def settings(data, previous, token_exists):
             raise ValueError('Tilføj et Cloudflare API-token med DNS Edit for zonen.')
         if flix and not data.get('relay_enabled'):
             raise ValueError('Aktivér TCP-videresendelse til HTTPS-gatewayen først.')
-    return dict(enabled=value['enabled'], domain=domain, zone_id=zone, fjordflix=flix)
+        if minecraft and not data.get('relay_enabled'):
+            raise ValueError('Aktivér TCP-videresendelse til Minecraft-serveren først.')
+    result=dict(enabled=value['enabled'], domain=domain, zone_id=zone, fjordflix=flix)
+    if minecraft:
+        result['minecraft_srv']=True
+    return result
 
 
 class StreamSync:
@@ -82,6 +90,19 @@ media.init(db)
             raise ValueError('FjordFlix kunne ikke kontaktes. Kontrollér at den er opdateret og kører.')
         return json.loads(result.output.decode().strip().splitlines()[-1])
 
+    def minecraft(self,config,token,port):
+        name='_minecraft._tcp.'+config['domain']
+        path='/zones/'+config['zone_id']+'/dns_records'
+        records=self.cf(token,'GET',path,params={'name':name,'per_page':100})
+        if len(records)>1 or any(r.get('type')!='SRV' or r.get('name','').lower()!=name
+                or r.get('data',{}).get('target','').rstrip('.').lower()!=config['domain'] for r in records):
+            raise ValueError('Minecraft-navnet har en konkurrerende SRV-record. Brug et nyt testnavn.')
+        data={'priority':0,'weight':0,'port':port,'target':config['domain']}
+        if records and records[0].get('data')==data:
+            return
+        self.cf(token,'PATCH' if records else 'POST',path+('/'+records[0]['id'] if records else ''),
+                json={'type':'SRV','name':name,'ttl':60,'data':data})
+
     def sync(self, profile, observed):
         config = profile['stream_sync']
         address = str(ipaddress.IPv4Address(observed['public_ip']))
@@ -89,6 +110,18 @@ media.init(db)
             raise ValueError('VPN har endnu ingen offentlig IPv4-adresse.')
         token = self.store.sync_token(profile)
         if not config.get('fjordflix', True):
+            if config.get('minecraft_srv'):
+                port=int(observed['public_port'])
+                if not 1<=port<=65535:
+                    raise ValueError('Afventer offentlig Minecraft-port.')
+                with self.store.lock:
+                    fresh=self.store.get(profile['id']);latest=self.runtime.status(fresh)
+                    if (fresh!=profile or latest.get('state')!='online' or not latest.get('relay_active')
+                            or latest.get('public_ip')!=address or int(latest.get('public_port',0))!=port):
+                        raise ValueError('Minecraft-forbindelsen ændrede sig. Afventer næste kontrol.')
+                    self.dns(config,token,address)
+                    self.minecraft(config,token,port)
+                return config['domain']
             self.dns(config, token, address)
             return config['domain']
         port = int(observed['public_port'])
@@ -133,11 +166,11 @@ media.init(db)
             try:
                 observed = self.runtime.status(profile)
                 flix = profile['stream_sync'].get('fjordflix', True)
-                if observed['state'] != 'online' or (flix and not observed['relay_active']):
+                if observed['state'] != 'online' or ((flix or profile['stream_sync'].get('minecraft_srv')) and not observed['relay_active']):
                     self.statuses[ident] = {'ok': False, 'message': 'Afventer VPN og aktiv TCP-videresendelse.' if flix else 'Afventer VPN.'}
                     continue
                 url = self.sync(profile, observed)
-                self.statuses[ident] = {'ok': True, 'message': 'DNS og streamadresse er ajour.' if flix else 'Cloudflare DNS er ajour.', 'url': url}
+                self.statuses[ident] = {'ok': True, 'message': 'DNS og streamadresse er ajour.' if flix else 'DNS og Minecraft Java-port er ajour.' if profile['stream_sync'].get('minecraft_srv') else 'Cloudflare DNS er ajour.', 'url': url}
             except ValueError as exc:
                 # Only our validation messages are safe to display; parser errors are generic.
                 message = str(exc) if not isinstance(exc, json.JSONDecodeError) else 'Ugyldigt svar fra forbindelsestesten.'

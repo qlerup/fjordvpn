@@ -23,6 +23,7 @@ async function openGatewayForm(profile=null){
  $('#gateway-title').textContent=profile?'Gatewayindstillinger':'Ny VPN-gateway';
  $('#gateway-name').value=profile?.name||'';$('#gateway-upload').hidden=!!profile;$('#gateway-file').required=!profile;
  $('#gateway-start-label').hidden=!!profile;$('#gateway-start').checked=false;
+ $('#gateway-auto-sync').checked=profile?.gateway?.auto_sync??true;
  $('#gateway-key').replaceChildren(el('option','','Vælg en nøgle'),...cloudflareKeys.map(key=>{const option=el('option','',key.name);option.value=key.id;return option;}));
  $('#gateway-key').firstChild.value='';$('#gateway-key').value=profile?.gateway?.key_id||'';
  $('#gateway-routes').replaceChildren(...(profile?.gateway?.routes||[{}]).map(gatewayRoute));
@@ -41,7 +42,7 @@ $('#gateway-form').onsubmit=async event=>{
   values.port=Number(values.port);return values;
  });
  const values={name:$('#gateway-name').value,host:'',port:null,relay_enabled:false,
-  gateway:{enabled:true,key_id:$('#gateway-key').value,routes},start:$('#gateway-start').checked};
+  gateway:{enabled:true,key_id:$('#gateway-key').value,auto_sync:$('#gateway-auto-sync').checked,routes},start:$('#gateway-start').checked};
  try{
   if(editingGateway){await api(`/api/profiles/${editingGateway.id}/settings`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});}
   else{const body=new FormData();body.set('settings',JSON.stringify(values));body.set('config',$('#gateway-file').files[0]);await api('/api/gateways',{method:'POST',body});}

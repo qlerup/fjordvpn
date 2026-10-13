@@ -24,6 +24,8 @@ with tempfile.TemporaryDirectory() as folder:
             page.get_by_role('button',name='Log ind').click()
             page.locator('#new-gateway').click();dialog=page.locator('#gateway-dialog')
             expect(dialog).to_be_visible();expect(page.locator('#gateway-start')).not_to_be_checked()
+            expect(page.locator('#gateway-auto-sync')).to_be_checked()
+            page.locator('#gateway-auto-sync').uncheck()
             page.locator('#gateway-name').fill('Mine webapps')
             page.locator('#gateway-file').set_input_files({'name':'gateway.conf','mimeType':'text/plain','buffer':config(2)})
             page.locator('#gateway-key').select_option(key)
@@ -43,15 +45,19 @@ with tempfile.TemporaryDirectory() as folder:
             page.locator('#gateway-save').click();expect(dialog).not_to_be_visible()
             gateways=[v for v in store.all() if v.get('gateway',{}).get('enabled')]
             assert len(gateways)==1 and not gateways[0]['desired'] and len(gateways[0]['gateway']['routes'])==2
+            assert gateways[0]['gateway']['auto_sync'] is False
             assert (store.directory(old['id'])/'profile.json').read_bytes()==before
             card=page.locator('.vpn-card').filter(has_text='Mine webapps')
             expect(card).to_contain_text('app.example.com')
             card.get_by_role('button',name='Indstillinger',exact=True).click()
             expect(page.locator('#gateway-upload')).not_to_be_visible()
+            expect(page.locator('#gateway-auto-sync')).not_to_be_checked()
+            page.locator('#gateway-auto-sync').check()
             expect(rows).to_have_count(2)
             rows.nth(1).get_by_role('button',name='Fjern mål',exact=True).click()
             page.locator('#gateway-save').click();expect(dialog).not_to_be_visible()
             assert len(store.get(gateways[0]['id'])['gateway']['routes'])==1
+            assert store.get(gateways[0]['id'])['gateway']['auto_sync'] is True
             page.reload();expect(card).to_contain_text('1 subdomæne')
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             assert not errors,errors
