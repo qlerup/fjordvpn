@@ -114,7 +114,7 @@ separat VPN til torrent-download/upload. FjordFlix' eksisterende direkte
 streamingopsætning kan fortsætte på sin nuværende profil; den flyttes ikke
 automatisk til Cloudflare-proxyen.
 
-Gatewayens særskilte **Minecraft Java**-indstilling sender spiltrafik til én
+Gatewayens særskilte **Gameserver**-sektion med typen Minecraft Java sender spiltrafik til én
 lokal Java-server gennem samme VPN-IP og port som HTTPS. Minecraft kan bruge
 en anden Cloudflare-zone med sin egen gemte nøgle (DNS Edit og Zone Read).
 Automatikken opretter/opdaterer DNS-only A og Minecraft-SRV og kontrollerer
@@ -178,6 +178,14 @@ API: https://developers.cloudflare.com/api/resources/dns/subresources/records/me
 Brug ikke samme Proton-nøgle i to aktive installationer. Appen afviser dubletter
 blandt sine egne profiler, men har ingen adgang til andre VPN-servere. Brug
 separate konfigurationer, mens gamle installationer stadig kører.
+
+## Slet en VPN-profil
+
+Sluk profilen, vent på **Slukket**, og vælg **Slet** på kortet. Bekræft sletningen.
+Profilens private konfiguration, lokale data og dens ejede containere fjernes.
+Andre profiler, fælles Cloudflare-nøgler, DNS og regler beholdes. Skal gatewayens
+DNS også fjernes, så fjern først målene og gem, mens automatisk synkronisering
+kører. Sletning af en gammel VPN ændrer dermed ikke en ny gateways domæner.
 
 ## Data, stop og afinstallation
 

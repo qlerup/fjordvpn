@@ -143,6 +143,21 @@ class Runtime:
             result.update(state='error', message=self.errors[p['id']])
         return result
 
+    def remove(self, p):
+        """Check both owners and states before removing this profile's resources."""
+        if p['desired']:
+            raise ValueError('Sluk VPN’en, før du sletter den.')
+        containers = [self.container(p['id'], kind) for kind in ('relay','vpn')]
+        for c in containers:
+            if c:
+                c.reload()
+                if c.status not in ('exited','created','dead'):
+                    raise ValueError('VPN’en er ikke helt slukket endnu. Vent lidt og prøv igen.')
+        for c in containers:
+            if c:
+                c.remove()
+        self.errors.pop(p['id'], None)
+
     def tick(self):
         with self.store.lock:
             for p in self.store.all():

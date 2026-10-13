@@ -18,3 +18,5 @@
 .gateway-route-name{display:flex;align-items:center;gap:8px;min-width:0}.gateway-route-name>span:last-child{min-width:0}.route-status-dot{display:inline-block;flex:0 0 8px;width:8px;height:8px;border-radius:50%;background:#f2b65a}.route-status-dot.is-ready{background:#6adeba}.route-status-dot.is-error{background:#ff8296}.route-status-dot:focus-visible{outline:2px solid var(--text);outline-offset:4px}.gateway-route-check{flex-basis:100%;padding-left:16px}.route-error{color:#ffacb9}
 
 #gateway-minecraft-fields{border:0;padding:0;margin:0;min-width:0}#gateway-minecraft-key{display:block;width:100%;margin-top:7px;padding:11px 12px;border:1px solid #374556;border-radius:7px;background:#0d141e;color:var(--text);font:inherit}
+
+.card-actions{flex-wrap:wrap}.delete-profile{color:#ffacb9}.danger{background:#713c4a;color:#fff;border:1px solid #aa576e}.danger:hover{background:#8c4558}

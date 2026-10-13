@@ -96,6 +96,24 @@ with tempfile.TemporaryDirectory() as folder:
             page.screenshot(path=str(output/'gateway-status-mobile.png'),full_page=True)
             page.set_viewport_size({'width':1440,'height':1000})
             page.screenshot(path=str(output/'gateway-status-desktop.png'),full_page=True)
+            # Stopped profile deletion: cancel is harmless, confirm removes only it.
+            app.extensions['runtime'].remove=lambda profile:None
+            page.reload()
+            old_card=page.locator('.vpn-card').filter(has_text='Seedbox')
+            expect(old_card.get_by_role('button',name='Slet',exact=True)).to_be_disabled()
+            card=page.locator('.vpn-card').filter(has_text='Mine webapps')
+            card.get_by_role('button',name='Slet',exact=True).click()
+            expect(page.locator('#delete-dialog')).to_contain_text('Cloudflare-nøgler, DNS-records og regler beholdes')
+            page.locator('#delete-dialog').get_by_role('button',name='Annuller',exact=True).click()
+            assert store.get(gateways[0]['id'])
+            page.set_viewport_size({'width':390,'height':844})
+            card.get_by_role('button',name='Slet',exact=True).click()
+            page.locator('#delete-confirm').click()
+            expect(page.locator('#delete-dialog')).not_to_be_visible()
+            expect(page.locator('.vpn-card').filter(has_text='Mine webapps')).to_have_count(0)
+            assert (store.directory(old['id'])/'profile.json').read_bytes()==before
+            assert len(store.keys())==2
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
             assert not errors,errors
             browser.close()
     finally:server.shutdown()

@@ -255,7 +255,7 @@ trafik til media-porten.
 
 ## 13. Minecraft Java på samme VPN som web og media
 
-Åbn gatewayens **Indstillinger**, og aktivér den særskilte **Minecraft Java**-del.
+Åbn gatewayens **Indstillinger**, og aktivér **Gameserver → Aktivér gameserver-videresendelse** (Minecraft Java).
 Minecraft skal ikke tilføjes som et HTTP/HTTPS-webmål.
 
 For denne installation:

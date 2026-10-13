@@ -160,3 +160,18 @@ were not restarted during this deployment. Player login/gameplay remains a
 manual check. A subsequent user update from the previous GitHub revision
 replaced the live image; saved Minecraft settings remained intact. This commit
 makes the tested implementation available to normal FjordHub updates.
+
+## Stopped profile deletion and gameserver wording
+
+The gameserver section now names its current supported type, Minecraft Java,
+and uses an activation label rather than implying a choice to bypass VPN.
+Other games/UDP are not advertised as supported by Java-specific DNS and probes.
+
+Stopped profiles can be deleted with authenticated CSRF-protected POST and
+explicit confirmation. Both container owners and states are checked before
+removal; local data is removed only from the validated profile directory.
+Other profiles, shared keys and Cloudflare DNS/rules are preserved. This makes
+deleting a retired VPN independent of a hostname migration to a new gateway.
+112 Python tests passed, including deletion scope, authorization, failure
+handling and container ownership checks. Desktop/mobile gateway browser checks
+passed including cancel, confirm, running-profile protection and persistence.

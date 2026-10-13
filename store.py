@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import threading
 import uuid
 
@@ -262,3 +263,14 @@ class Store:
             p['desired'] = wanted
             self.save(p)
             return p
+
+    def delete(self, ident):
+        """Remove one stopped profile's local data; shared keys and DNS remain."""
+        with self.lock:
+            p = self.get(ident)
+            if p['desired']:
+                raise ValueError('Sluk VPN’en, før du sletter den.')
+            folder = self.directory(ident)
+            if folder.is_symlink() or folder.resolve().parent != (self.root/'profiles').resolve():
+                raise ValueError('Profilens datamappe kunne ikke slettes sikkert.')
+            shutil.rmtree(folder)

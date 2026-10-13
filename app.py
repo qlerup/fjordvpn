@@ -227,6 +227,29 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
     gateway_sync = GatewaySync(store,runtime)
     app.extensions['gateway_sync']=gateway_sync
     app.extensions['stop_event']=stop_event
+    @app.post('/api/profiles/<ident>/delete')
+    def delete_profile(ident):
+        data = request.get_json(silent=True)
+        if not isinstance(data,dict) or data.get('confirm') is not True:
+            return jsonify(error='Bekræft sletningen af VPN-profilen.'),400
+        try:
+            with store.lock:
+                p = store.get(ident)
+                if p['desired']:
+                    raise ValueError('Sluk VPN’en, før du sletter den.')
+                runtime.remove(p)
+                store.delete(ident)
+                stream_sync.statuses.pop(ident,None)
+                stream_sync.next_check.pop(ident,None)
+                gateway_sync.statuses.pop(ident,None)
+                gateway_sync.next_check.pop(ident,None)
+                gateway_sync.progress.pop(ident,None)
+            return {'ok':True}
+        except ValueError as exc:
+            return jsonify(error=str(exc)),400
+        except Exception:
+            return jsonify(error='VPN-profilen kunne ikke slettes. Kontrollér Docker og prøv igen.'),503
+
     def worker():
         while not stop_event.is_set():
             try:
