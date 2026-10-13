@@ -230,3 +230,5 @@ Tests dækker upload, validering, dubletter, login/CSRF, FjordHub-SSO og
 adgangstilbagekaldelse, adskilte Docker-ressourcer og værtssti-mapping.
 Browserkontrollen bruger syntetiske profiler ved desktop- og mobilbredde.
 Pakkeinstallation og oprydning kontrolleres isoleret uden at starte en VPN.
+
+Gatewaykortet viser også tilknyttet FjordSeed med egen TCP/UDP-torrentport og grøn, orange, rød eller grå status. Grøn kræver en frisk qBittorrent-workerstatus, korrekt VPN-namespace og generation samt matchende offentlig IP og torrentport. Det er en driftskontrol, ikke en løbende ekstern hastighedstest. Visningen kræver kun opdatering af FjordVPN, når FjordSeed allerede understøtter delt gateway.

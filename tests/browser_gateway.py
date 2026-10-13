@@ -96,6 +96,18 @@ with tempfile.TemporaryDirectory() as folder:
             page.screenshot(path=str(output/'gateway-status-mobile.png'),full_page=True)
             page.set_viewport_size({'width':1440,'height':1000})
             page.screenshot(path=str(output/'gateway-status-desktop.png'),full_page=True)
+            # FjordSeed status shares the gateway card, including on mobile.
+            for state in ['ready','pending','error','off']:
+                example['seedbox_status']={'state':state,'public_port':50294,'message':'Torrentstatus kontrolleret.'}
+                page.evaluate("profile=>document.querySelector('#managed-grid').replaceChildren(card(profile))",example)
+                expect(page.locator('.seedbox-status .is-'+state)).to_have_count(1)
+                if state=='ready':
+                    expect(page.locator('.seedbox-status')).to_contain_text('TCP/UDP :50294')
+                for width in [390,1440]:
+                    page.set_viewport_size({'width':width,'height':1000})
+                    assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+                    if state=='ready':
+                        page.screenshot(path=str(output/f'gateway-seedbox-{width}.png'),full_page=True)
             # Stopped profile deletion: cancel is harmless, confirm removes only it.
             app.extensions['runtime'].remove=lambda profile:None
             page.reload()

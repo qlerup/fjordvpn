@@ -20,3 +20,5 @@
 #gateway-minecraft-fields{border:0;padding:0;margin:0;min-width:0}#gateway-minecraft-key{display:block;width:100%;margin-top:7px;padding:11px 12px;border:1px solid #374556;border-radius:7px;background:#0d141e;color:var(--text);font:inherit}
 
 .card-actions{flex-wrap:wrap}.delete-profile{color:#ffacb9}.danger{background:#713c4a;color:#fff;border:1px solid #aa576e}.danger:hover{background:#8c4558}
+
+.route-status-dot.is-off{background:#81919c}.seedbox-status{margin-top:14px}

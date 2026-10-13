@@ -1,7 +1,9 @@
 """Docker lifecycle limited to this application's UUID-labelled resources."""
 import json
+import io
 import os
 from pathlib import Path
+import tarfile
 import time
 
 import docker
@@ -141,7 +143,55 @@ class Runtime:
                 pass
         if self.errors.get(p['id']):
             result.update(state='error', message=self.errors[p['id']])
+        if p.get('gateway', {}).get('enabled'):
+            result['seedbox_status'] = self.seedbox_status(p, result)
         return result
+
+    def seedbox_status(self, p, observed):
+        """Read only the worker's public health report, never its credentials."""
+        pending = dict(state='pending', message='Afventer FjordSeed og torrentport.', public_port=None)
+        try:
+            children = self.client.containers.list(all=True, filters={'label':[
+                'dk.fjordseed.owner', LABEL+'='+p['id'], 'dk.fjordseed.torrent-mode=gateway']})
+            children = [c for c in children
+                        if c.labels.get('dk.fjordseed.vpn-project') == self.project]
+            if not children:
+                return None
+            if len(children) != 1:
+                return dict(pending, state='error', message='Flere FjordSeed-forbindelser bruger profilen.')
+            child = children[0]
+            if child.status != 'running':
+                return dict(pending, state='off', message='FjordSeed er stoppet.')
+            vpn = self.container(p['id'], 'vpn')
+            if (not vpn or vpn.status != 'running' or not p['desired']
+                    or observed['state'] != 'online'):
+                return dict(pending, message='Afventer gatewayens VPN-forbindelse.')
+            if (child.attrs['HostConfig']['NetworkMode'] != 'container:'+vpn.id
+                    or child.labels.get('dk.fjordseed.vpn-generation') != vpn.id+':'+vpn.attrs['State']['StartedAt']):
+                return dict(pending, message='FjordSeed skifter til den aktuelle VPN-forbindelse.')
+            stream, _ = child.get_archive('/config/worker-status.json')
+            payload = bytearray()
+            for chunk in stream:
+                payload.extend(chunk)
+                if len(payload) > 262144:
+                    raise ValueError('Oversized worker report')
+            with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
+                member = archive.getmember('worker-status.json')
+                if not member.isfile() or member.size > 131072:
+                    raise ValueError('Invalid worker report')
+                status = json.load(archive.extractfile(member))
+            if not 0 <= time.time()-status['checked_at'] < 10:
+                return dict(pending, message='Afventer en frisk status fra FjordSeed.')
+            port = status.get('public_torrent_port')
+            if (status.get('ready') is True and status.get('torrent_mode') == 'gateway'
+                    and status.get('public_ip') == observed['public_ip']
+                    and type(port) is int and 1 <= port <= 65535
+                    and str(status.get('internal_port')) == child.labels.get('dk.fjordseed.torrent-internal-port')):
+                return dict(state='ready', public_port=port,
+                            message='Forbundet gennem gatewayens VPN med egen TCP/UDP-torrentport.')
+            return pending
+        except (docker.errors.DockerException, OSError, ValueError, KeyError, TypeError, tarfile.TarError):
+            return dict(pending, state='error', message='FjordSeeds forbindelsesstatus kunne ikke kontrolleres.')
 
     def remove(self, p):
         """Check both owners and states before removing this profile's resources."""
