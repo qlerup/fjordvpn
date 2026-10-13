@@ -63,6 +63,28 @@ with tempfile.TemporaryDirectory() as folder:
             assert store.get(gateways[0]['id'])['gateway']['auto_sync'] is True
             page.reload();expect(card).to_contain_text('1 subdomæne')
             assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+            # Display three independent route states, with accessible explanations.
+            example=store.get(gateways[0]['id'])
+            example.update(desired=True,state='online',relay_active=True,public_ip='1.1.1.1',public_port=40000)
+            example['gateway']['routes']=[{**example['gateway']['routes'][0],'domain':name}
+                for name in ['ready.example.com','pending.example.com','error.example.com']]
+            example['gateway_status']={'state':'error','message':'Et domæne har en fejl.','routes':{
+                'ready.example.com':{'state':'ready','message':'HTTPS svarer.'},
+                'pending.example.com':{'state':'pending','message':'Afventer certifikat.'},
+                'error.example.com':{'state':'error','message':'Cloudflare afviste nøglen.'}}}
+            page.evaluate("profile=>document.querySelector('#managed-grid').replaceChildren(card(profile))",example)
+            demo=page.locator('#managed-grid .vpn-card')
+            for state in ['ready','pending','error']:
+                expect(demo.locator('.route-status-dot.is-'+state)).to_have_count(1)
+                assert demo.locator('.route-status-dot.is-'+state).bounding_box()['width']==8
+            expect(demo.locator('.badge')).to_have_text('Fejl')
+            expect(demo).to_contain_text('Opsætter: Afventer certifikat.')
+            expect(demo).to_contain_text('Fejl: Cloudflare afviste nøglen.')
+            expect(demo.locator('.route-status-dot.is-ready')).to_have_attribute('aria-label','Online: HTTPS svarer.')
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
+            page.screenshot(path=str(output/'gateway-status-mobile.png'),full_page=True)
+            page.set_viewport_size({'width':1440,'height':1000})
+            page.screenshot(path=str(output/'gateway-status-desktop.png'),full_page=True)
             assert not errors,errors
             browser.close()
     finally:server.shutdown()

@@ -6,7 +6,7 @@ import time
 
 import requests
 from configuration import validate_target
-from stream_sync import StreamSync
+from stream_sync import StreamSync,StreamPending
 
 
 DOMAIN = re.compile(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}')
@@ -83,6 +83,49 @@ class GatewaySync:
         self.store,self.runtime=store,runtime
         self.statuses,self.next_check={},{}
         self.stream=StreamSync(store,runtime)
+        self.progress={}
+
+    def signature(self,profile,observed):
+        return (profile['revision'],observed.get('public_ip'),str(observed.get('public_port')))
+
+    def status(self,profile,observed):
+        """Never expose readiness checked for an old configuration or VPN endpoint."""
+        cached=self.statuses.get(profile['id'],{})
+        if (not profile['desired'] or observed.get('state')!='online' or not observed.get('relay_active')
+                or cached.get('_signature')!=self.signature(profile,observed)
+                or time.monotonic()-cached.get('_checked',0)>90):
+            return {}
+        return {k:v for k,v in cached.items() if not k.startswith('_')}
+
+    def waiting(self,profile,observed,domain,message):
+        ident=profile['id'];signature=self.signature(profile,observed)
+        progress=self.progress.get(ident)
+        if not progress or progress['signature']!=signature:
+            progress={'signature':signature,'started':time.monotonic(),'ready':set()}
+            self.progress[ident]=progress
+        failed=domain in progress['ready'] or time.monotonic()-progress['started']>=300
+        return {'state':'error' if failed else 'pending','message':message}
+
+    def failure(self,profile,observed,row,exc):
+        if isinstance(exc,(StreamPending,requests.RequestException)):
+            return self.waiting(profile,observed,row['domain'],'Afventer DNS, HTTPS-certifikat eller forbindelse.' if isinstance(exc,requests.RequestException) else str(exc))
+        return {'state':'error','message':str(exc) if isinstance(exc,ValueError) and not isinstance(exc,json.JSONDecodeError) else 'Forbindelsen kunne ikke kontrolleres.'}
+
+    def probe_web(self,profile,observed,row):
+        url='https://'+row['domain']
+        try:
+            with requests.Session() as session:
+                session.trust_env=False
+                # Inspect headers only; never download a page or follow login redirects.
+                response=session.get(url,timeout=8,allow_redirects=False,stream=True)
+                code=response.status_code;response.close()
+            if 200<=code<400 or code==401:
+                return {'state':'ready','message':'HTTPS-adressen svarer. Domænet er online.','url':url}
+            if code in (404,502,522,523,525,526):
+                return self.waiting(profile,observed,row['domain'],f'HTTPS-adressen svarer med HTTP {code}. Afventer fungerende forbindelse.')
+            return {'state':'error','message':f'HTTPS-adressen svarer med HTTP {code}.','url':url}
+        except requests.RequestException as exc:
+            return self.failure(profile,observed,row,exc)
 
     def cf(self,token,method,path,allow_missing=False,**kwargs):
         with requests.Session() as session:
@@ -105,7 +148,7 @@ class GatewaySync:
                 or str(latest.get('public_port'))!=str(observed['public_port'])):
             raise ValueError('Gatewayen ændrede sig. Afventer næste kontrol.')
 
-    def sync(self,profile,observed):
+    def sync(self,profile,observed,route_status=None):
         config=profile['gateway'];key=self.store.key(config['key_id']);token=key['token']
         address=ipaddress.IPv4Address(observed['public_ip']);port=int(observed['public_port'])
         if not address.is_global or not 1<=port<=65535:
@@ -161,12 +204,27 @@ class GatewaySync:
             with self.store.lock:
                 self.current(profile,observed)
                 self.cf(token,'PATCH' if record else 'POST',zone+'/dns_records'+('/'+record['id'] if record else ''),json=payload)
+        if route_status is not None:
+            for row in config['routes']:
+                if not row.get('fjordflix'):
+                    route_status[row['domain']]=self.probe_web(profile,observed,row)
         if stream_error:
+            if route_status is not None:
+                for row in config['routes']:
+                    if row.get('fjordflix'):
+                        route_status[row['domain']]=self.failure(profile,observed,row,stream_error)
             raise stream_error
         urls=[]
         for row in config['routes']:
             if row.get('fjordflix'):
-                url=self.stream.verify_stream(row['domain'],port,lambda:self.current(profile,observed),stream_state)
+                try:
+                    url=self.stream.verify_stream(row['domain'],port,lambda:self.current(profile,observed),stream_state)
+                except Exception as exc:
+                    if route_status is not None:
+                        route_status[row['domain']]=self.failure(profile,observed,row,exc)
+                    raise
+                if route_status is not None:
+                    route_status[row['domain']]={'state':'ready','message':'HTTPS-test godkendt. FjordFlix-streamadressen er opdateret.','url':url}
                 urls.append(url)
             else:
                 urls.append('https://'+row['domain'])
@@ -176,21 +234,42 @@ class GatewaySync:
         for profile in self.store.all():
             ident=profile['id']
             if not profile.get('gateway',{}).get('enabled') or not profile['desired']:
-                self.statuses.pop(ident,None);self.next_check.pop(ident,None);continue
-            if not profile['gateway'].get('auto_sync',True):
-                self.statuses[ident]={'ok':True,'message':'Automatisk IP og port er slået fra. Cloudflare skal opdateres manuelt.'}
-                self.next_check.pop(ident,None);continue
+                self.statuses.pop(ident,None);self.next_check.pop(ident,None);self.progress.pop(ident,None);continue
+            observed=self.runtime.status(profile)
+            signature=self.signature(profile,observed)
+            progress=self.progress.get(ident)
+            if not progress or progress['signature']!=signature:
+                self.progress[ident]={'signature':signature,'started':time.monotonic(),'ready':set()}
+                self.next_check.pop(ident,None)
             if time.monotonic()<self.next_check.get(ident,0):
                 continue
             self.next_check[ident]=time.monotonic()+30
-            try:
-                observed=self.runtime.status(profile)
-                if observed['state']!='online' or not observed.get('relay_active'):
-                    raise ValueError('Afventer VPN og gateway. HTTPS-certifikater oprettes automatisk.')
-                urls=self.sync(profile,observed)
-                message='DNS, HTTPS-port og FjordFlix-streamadresse er ajour.' if any(r.get('fjordflix') for r in profile['gateway']['routes']) else 'DNS og HTTPS-port er ajour. Certifikater kan være under oprettelse.'
-                self.statuses[ident]={'ok':True,'message':message,'urls':urls}
-            except ValueError as exc:
-                self.statuses[ident]={'ok':False,'message':str(exc) if not isinstance(exc,json.JSONDecodeError) else 'Ugyldigt svar fra Cloudflare.'}
-            except Exception:
-                self.statuses[ident]={'ok':False,'message':'Gateway-synkronisering afventer. Prøver igen automatisk.'}
+            routes={};urls=[];error=None
+            if not profile['gateway'].get('auto_sync',True):
+                message='Automatisk IP og port er slået fra. Domænernes opsætning er ikke verificeret.'
+                routes={r['domain']:{'state':'pending','message':message} for r in profile['gateway']['routes']}
+            elif observed.get('state')!='online' or not observed.get('relay_active'):
+                state='error' if observed.get('state')=='error' else 'pending'
+                message=observed.get('message') if state=='error' else 'Afventer VPN og HTTPS-gateway.'
+                routes={r['domain']:{'state':state,'message':message or 'VPN-forbindelsen har en fejl.'} for r in profile['gateway']['routes']}
+            else:
+                try:
+                    urls=self.sync(profile,observed,routes)
+                except Exception as exc:
+                    error=exc
+                for row in profile['gateway']['routes']:
+                    if row['domain'] not in routes:
+                        routes[row['domain']]=self.failure(profile,observed,row,error) if error else self.waiting(profile,observed,row['domain'],'Afventer forbindelsestest.')
+                # Do not publish a green result after concurrent editing/reconnection.
+                fresh=self.store.get(ident);latest=self.runtime.status(fresh)
+                if fresh!=profile or self.signature(fresh,latest)!=signature or latest.get('state')!='online' or not latest.get('relay_active'):
+                    self.statuses.pop(ident,None);self.next_check.pop(ident,None);continue
+            for domain,value in routes.items():
+                if value['state']=='ready':
+                    self.progress[ident]['ready'].add(domain)
+            state='error' if any(v['state']=='error' for v in routes.values()) else 'ready' if routes and all(v['state']=='ready' for v in routes.values()) else 'pending'
+            message='Alle domæner er verificeret og online.' if state=='ready' else 'Et eller flere domæner har en fejl. Se status ved domænet.' if state=='error' else 'Opsætning og forbindelsestest er i gang. Se status ved domænet.'
+            if not profile['gateway'].get('auto_sync',True):
+                message='Automatisk IP og port er slået fra. Cloudflare skal opdateres manuelt.'
+            self.statuses[ident]={'ok':state=='ready','state':state,'message':message,'urls':urls,'routes':routes,
+                '_signature':signature,'_checked':time.monotonic()}

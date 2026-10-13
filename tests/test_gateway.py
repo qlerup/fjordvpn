@@ -7,6 +7,8 @@ import pytest
 from gateway import settings,caddy_config,GatewaySync
 from store import Store
 from seedbox_export import profiles
+from stream_sync import StreamPending
+import requests
 from test_app import config,create_app,FakeRuntime,login
 
 
@@ -103,6 +105,7 @@ def fixture_sync(tmp_path,records=None,ruleset=None):
         if path.endswith('/entrypoint'):return ruleset
         return {'name':'example.com'}
     sync.cf=Mock(side_effect=cf)
+    sync.probe_web=Mock(return_value={'state':'ready','message':'HTTPS svarer.'})
     return sync,p,observed,store
 
 
@@ -202,3 +205,63 @@ def test_wrong_stream_domain_keeps_media_dns_and_allows_web_updates(tmp_path):
     writes=[c.kwargs['json'] for c in sync.cf.call_args_list if c.args[1]!='GET']
     dns=[w for w in writes if w.get('type')=='A']
     assert [w['name'] for w in dns]==['app.example.com']
+
+
+def test_route_status_distinguishes_web_ready_and_media_pending(tmp_path):
+    sync,p,observed,store=fixture_sync(tmp_path)
+    p['gateway']['routes'][1]['fjordflix']=True;store.save(p)
+    sync.stream.stream_state=Mock(return_value={'media':'https://other.example.com:30000','web':'https://app.example.com'})
+    sync.stream.verify_stream=Mock(side_effect=StreamPending('Afventer korrekt HTTPS-forbindelse.'))
+    sync.tick();status=sync.status(p,observed)
+    assert status['state']=='pending' and not status['ok']
+    assert status['routes']['app.example.com']['state']=='ready'
+    assert status['routes']['other.example.com']['state']=='pending'
+    sync.next_check.clear();sync.stream.verify_stream.side_effect=None
+    sync.stream.verify_stream.return_value='https://other.example.com:38850'
+    sync.tick();assert sync.status(p,observed)['state']=='ready'
+    # A previously working domain turns red if its next check fails.
+    sync.next_check.clear();sync.stream.verify_stream.side_effect=requests.ConnectionError('private diagnostic')
+    sync.tick();status=sync.status(p,observed)
+    assert status['state']=='error' and status['routes']['app.example.com']['state']=='ready'
+    assert 'private diagnostic' not in json.dumps(status)
+
+
+def test_route_readiness_is_discarded_after_edit_reconnect_or_stale_check(tmp_path):
+    sync,p,observed,store=fixture_sync(tmp_path);sync.tick()
+    assert sync.status(p,observed)['state']=='ready'
+    assert '_signature' not in sync.status(p,observed)
+    assert sync.status(p,{**observed,'public_port':40000})=={}
+    changed=store.edit(p['id'],{'name':'Edited','gateway':p['gateway']})
+    assert sync.status(changed,observed)=={}
+    sync.tick();assert sync.status(changed,observed)['state']=='ready'
+    sync.statuses[p['id']]['_checked']-=91
+    assert sync.status(changed,observed)=={}
+
+
+def test_configuration_failure_is_red_without_false_ready_status(tmp_path):
+    sync,p,observed,_=fixture_sync(tmp_path,records=[{'type':'CNAME','name':'app.example.com'}])
+    sync.tick();status=sync.status(p,observed)
+    assert status['state']=='error'
+    assert all(r['state']=='error' for r in status['routes'].values())
+    sync.probe_web.assert_not_called()
+
+
+@pytest.mark.parametrize('code,state',[(200,'ready'),(302,'ready'),(401,'ready'),(404,'pending'),(526,'pending'),(500,'error'),(403,'error')])
+def test_https_probe_uses_verified_tls_no_redirect_and_no_body_download(tmp_path,code,state):
+    sync,p,observed,_=fixture_sync(tmp_path)
+    with patch('gateway.requests.Session') as session:
+        client=session.return_value.__enter__.return_value
+        client.get.return_value.status_code=code
+        result=GatewaySync.probe_web(sync,p,observed,p['gateway']['routes'][0])
+        assert result['state']==state
+        client.get.assert_called_once_with('https://app.example.com',timeout=8,allow_redirects=False,stream=True)
+        assert client.trust_env is False
+        client.get.return_value.close.assert_called_once()
+
+
+def test_setup_failure_turns_red_after_five_minutes(tmp_path):
+    sync,p,observed,_=fixture_sync(tmp_path)
+    with patch('gateway.time.monotonic',return_value=100):
+        assert sync.waiting(p,observed,'app.example.com','Afventer DNS.')['state']=='pending'
+    with patch('gateway.time.monotonic',return_value=401):
+        assert sync.waiting(p,observed,'app.example.com','Afventer DNS.')['state']=='error'

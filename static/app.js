@@ -17,7 +17,19 @@ function card(p,legacy=false){
  if(p.stream_sync?.enabled) main.append(el('p','small '+(p.stream_status?.ok?'':'muted'),p.stream_status?.message||'Automatisk DNS og streamport afventer kontrol.'));
  if(gateway){
   target.querySelector('.target').textContent=p.gateway.routes.length+(p.gateway.routes.length===1?' subdomæne':' subdomæner');targetRow.lastChild.textContent=p.relay_active?'HTTPS aktiv':'HTTPS afventer';
-  for(const route of p.gateway.routes){const item=el('div','gateway-card-route');item.append(el('span','',route.domain+(route.fjordflix?' · Direkte stream'+(p.public_port?' :'+p.public_port:''):'')),el('span','small muted',`${route.protocol}://${route.host}:${route.port}`));main.append(item);}
+  const runtimeError=p.state==='error',available=p.desired&&p.state==='online'&&p.relay_active;
+  const checks=available?(p.gateway_status?.routes||{}):{};
+  for(const route of p.gateway.routes){
+   const check=checks[route.domain]||{state:runtimeError?'error':'pending',message:runtimeError?(p.message||'VPN-forbindelsen har en fejl.'):p.desired?'Afventer VPN, DNS og HTTPS-test.':'Gatewayen er slukket.'};
+   const state=['ready','pending','error'].includes(check.state)?check.state:'pending';
+   const label={ready:'Online',pending:'Opsætter',error:'Fejl'}[state],name=el('span','gateway-route-name');
+   const dot=el('span','route-status-dot is-'+state);dot.setAttribute('role','img');dot.setAttribute('aria-label',label+': '+check.message);dot.title=label+': '+check.message;dot.tabIndex=0;
+   name.append(dot,el('span','',route.domain+(route.fjordflix?' · Direkte stream'+(p.public_port?' :'+p.public_port:''):'')));
+   const item=el('div','gateway-card-route');item.append(name,el('span','small muted',`${route.protocol}://${route.host}:${route.port}`));
+   if(state!=='ready')item.append(el('span','gateway-route-check small '+(state==='error'?'route-error':'muted'),(p.desired?label+': ':'')+check.message));
+   main.append(item);
+  }
+  if(available){const state=p.gateway_status?.state||'pending',badge=top.querySelector('.badge');badge.className='badge '+({ready:'online',error:'error',pending:'connecting'}[state]||'connecting');badge.textContent={ready:'Online',error:'Fejl',pending:'Opsætter'}[state]||'Opsætter';}
   main.append(el('p','small muted',p.gateway_status?.message||'DNS og HTTPS-port afventer kontrol.'));
  }
  const footer=el('div','card-footer');footer.append(el('p','card-message',p.message||''));const actions=el('div','card-actions');

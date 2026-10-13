@@ -9,6 +9,10 @@ from urllib.parse import urlsplit
 import requests
 
 
+class StreamPending(ValueError):
+    """DNS, certificates or the new media endpoint are still settling."""
+
+
 def settings(data, previous, token_exists):
     if 'stream_sync' not in data:
         return previous
@@ -156,7 +160,7 @@ media.init(db)
             session.trust_env = False
             response = session.get(url + '/media/connection-check', timeout=10, allow_redirects=False)
         if response.status_code != 200 or response.json().get('nonce') != nonce:
-            raise ValueError('DNS er opdateret; afventer korrekt HTTPS-forbindelse til FjordFlix.')
+            raise StreamPending('DNS er opdateret; afventer korrekt HTTPS-forbindelse til FjordFlix.')
         # Configuration or the VPN endpoint may have changed while DNS/HTTPS was checked.
         with self.store.lock:
             check_current()

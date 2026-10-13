@@ -158,9 +158,12 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
     @app.get('/api/profiles')
     def profiles():
         with store.lock:
-            return jsonify(profiles=[dict(runtime.status(p), stream_status=stream_sync.statuses.get(p['id'], {}),
-                gateway_status=gateway_sync.statuses.get(p['id'],{}),
-                cloudflare_token_saved=(store.directory(p['id'])/'cloudflare-token').exists()) for p in store.all()])
+            def listed(p):
+                observed=runtime.status(p)
+                return dict(observed, stream_status=stream_sync.statuses.get(p['id'], {}),
+                    gateway_status=gateway_sync.status(p,observed),
+                    cloudflare_token_saved=(store.directory(p['id'])/'cloudflare-token').exists())
+            return jsonify(profiles=[listed(p) for p in store.all()])
 
     @app.get('/api/cloudflare-keys')
     def cloudflare_keys():

@@ -79,3 +79,19 @@ the public port and rejects the media hostname's web root. After the final
 web-sync isolation adjustment, all 33 gateway/stream tests passed again.
 No active media DNS or production stream configuration was changed for this
 feature. Real video playback remains a migration check in the setup guide.
+
+## Per-domain readiness indicators
+
+Gateway cards now show independent ready/pending/error indicators for each
+hostname and only show Online when every route is ready. Web readiness uses a
+verified public HTTPS request without redirects or a response-body download;
+media readiness reuses the verified nonce/activation check. New DNS/TLS/connection
+failures are pending for five minutes; failures of previously ready routes and
+configuration errors are red. Cache results are discarded after profile edits,
+VPN endpoint changes, unavailable relays or 90 seconds without a fresh check.
+
+83 Python tests passed, including independent web/media readiness, recovery,
+TLS/request behavior, error classification and stale-result rejection. The
+gateway browser suite passed at desktop/mobile widths with all three colors,
+accessible explanations and persisted settings. Existing streaming and legacy
+profile tests remain passing. No production profile or DNS was changed.

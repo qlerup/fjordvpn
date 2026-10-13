@@ -164,7 +164,8 @@ For den eksisterende installation:
    sættes streamadressen til `https://media.gleruphub.dk:<gatewayens VPN-port>`.
    Hjemmesidens adresse beholdes. DNS/cache og certifikater kan give en kort
    afbrydelse; fejlet test beholder den hidtidige FjordFlix-streamadresse.
-6. Vent på **DNS, HTTPS-port og FjordFlix-streamadresse er ajour**, genindlæs
+6. Vent på grøn status ved både film og media samt **Alle domæner er verificeret
+   og online**, genindlæs
    FjordFlix, og test login og videoafspilning fra mobildata. Først derefter kan
    den gamle FjordFlix-VPN slukkes. Seedbox-VPN'en er en separat forbindelse.
 
@@ -183,6 +184,25 @@ streamdomæne uden at du først ændrer opsætningen i FjordHub.
 Rollback: fjern media-ruten fra gatewayen, genaktivér den gamle FjordFlix-VPNs
 automatiske DNS/streamsynkronisering, og vent på dens godkendte forbindelsestest.
 DNS-recorden slettes ikke, når en gatewayrute fjernes.
+
+## 10. Status på hvert gatewaydomæne
+
+- Grøn prik: webdomænets offentlige HTTPS-adresse svarer, eller media-domænets
+  HTTPS/nonce-test er godkendt og FjordFlix-streamadressen er opdateret.
+- Orange prik: VPN, DNS, certifikat eller forbindelsestest er endnu ikke klar.
+  Nye forbindelser får op til fem minutter til at falde på plads.
+- Rød prik: opsætningsfejl eller en vedvarende forbindelsesfejl. Et tidligere
+  fungerende domæne bliver rødt, hvis den næste kontrol fejler.
+
+Forklaringen vises under orange/røde domæner og ved fokus/hover på prikken.
+Gatewaykortet viser først Online, når alle domæner er grønne; den underliggende
+VPN kan godt være online, mens domænerne stadig opsættes. Kontrollen sker
+cirka hvert 30. sekund. En ændret opsætning eller VPN-IP/port kræver en ny
+godkendt kontrol, og gamle grønne resultater skjules efter 90 sekunder.
+Webkontrollen validerer HTTPS og kontrollerer svarets status uden at hente siden
+eller følge login-redirects. Et login-svar (HTTP 401) regnes som tilgængeligt;
+den tester ikke login eller fuld afspilning. Ved deaktiveret automatisk
+synkronisering vises orange med forklaring om, at opsætningen ikke er verificeret.
 
 Ved fejl: kontrollér korrekt Cloudflare-zone, tokenrettigheder, HTTP/HTTPS-valg,
 lokalt mål og tilladte værtsnavne. En gateway viser Online før alle certifikater
