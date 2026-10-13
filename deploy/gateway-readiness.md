@@ -175,3 +175,13 @@ deleting a retired VPN independent of a hostname migration to a new gateway.
 112 Python tests passed, including deletion scope, authorization, failure
 handling and container ownership checks. Desktop/mobile gateway browser checks
 passed including cancel, confirm, running-profile protection and persistence.
+
+## FjordSeed sharing with a separate open torrent port
+
+The secret-free seedbox export now includes a gateway capability boolean while
+retaining relay_enabled=true for old clients. Updated FjordSeed leases a second
+direct NAT-PMP TCP/UDP mapping; HTTPS/Minecraft retain the original mapping.
+The Proton WireGuard profile and Caddy configuration are unchanged. Native
+UID-1000 qBittorrent tests passed for TCP, encrypted TCP, uTP upload, download
+from a different public VPN exit, supervisor failure closure and recovery.
+Detailed verification and rollout: [FjordSeed release checks](https://github.com/qlerup/fjordseed/blob/main/deploy/shared-gateway-readiness.md).

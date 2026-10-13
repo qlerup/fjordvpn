@@ -108,9 +108,10 @@ slå certifikatkontrol fra. Lokale apps skal tillade deres nye værtsnavn og væ
 konfigureret til deres offentlige HTTPS-adresse.
 
 Eksisterende profiler beholder deres type, konfiguration, TCP-relay og
-FjordFlix-synkronisering. En gateway bruger Protons tildelte port til HTTPS,
-så den kan ikke samtidig være FjordSeeds torrentprofil. Brug fortsat en
-separat VPN til torrent-download/upload. FjordFlix' eksisterende direkte
+FjordFlix-synkronisering. En opdateret FjordSeed kan dele gatewayens VPN og
+reservere en ekstra åben TCP/UDP-torrentport via NAT-PMP. Gatewayens første
+port bruges fortsat til HTTPS/Minecraft; torrents benytter deres egen direkte
+port. En separat Seedbox-VPN kan fortsat vælges. FjordFlix' eksisterende direkte
 streamingopsætning kan fortsætte på sin nuværende profil; den flyttes ikke
 automatisk til Cloudflare-proxyen.
 

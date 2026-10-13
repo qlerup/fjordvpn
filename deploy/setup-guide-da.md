@@ -15,14 +15,15 @@ opdateringen. Derefter kan nye testprofiler oprettes uden at flytte de gamle.
 
 | Tjeneste | Opsætning | Hvad går gennem VPN? |
 |---|---|---|
-| FjordSeed torrents | Behold den eksisterende Seedbox-VPN, TCP-relay fra | Torrent-download og upload |
+| FjordSeed torrents | Separat Seedbox-VPN eller gateway med ekstra åben torrentport | Torrent-download og upload |
 | FjordSeed webside og andre webapps | Ny VPN-gateway | Adgang til websiden udefra |
 | FjordFlix eksisterende streaming | Behold den eksisterende FjordFlix-VPN | Den nuværende direkte streamingforbindelse |
 | Minecraft-hjemmeside | Ny VPN-gateway på Minecraft-domænet | HTTP/HTTPS til hjemmesiden |
 | Minecraft Java-server | Gatewayens Minecraft Java-indstilling eller separat TCP-profil | Spilforbindelsen |
 
 En web-gateway ændrer ikke de lokale serveres almindelige internettrafik.
-Torrentklienten og web-gatewayen kan ikke dele den ene tildelte Proton-port.
+Torrentklienten og web-gatewayen bruger hver sin indgående port, også når de
+deler VPN-konfigurationen; se trin 14.
 Minecraft-spiltrafik er ikke HTTP og skal derfor ikke tilføjes som et webmål.
 Bedrock/UDP understøttes ikke af det nuværende TCP-relay.
 
@@ -290,3 +291,30 @@ Hvis Minecraft fravælges og gatewayen gemmes, rydder automatisk synkronisering
 dens uændrede ejede A- og SRV-records op. Stop alene beholder DNS. Ved rollback
 skal den gamle DNS-opsætning gendannes og dens updater genaktiveres, efter at
 gatewayens Minecraft-del er deaktiveret.
+
+## 14. FjordSeed download og upload på gatewayens VPN
+
+1. Opdatér FjordVPN og derefter FjordSeed i FjordHub.
+2. Behold gatewayen tændt med film, media og Minecraft som hidtil.
+3. I FjordSeed: åbn **VPN-forbindelse**, vælg **Gateway · delt VPN, egen
+   torrentport**, og tryk **Gem VPN-valg**.
+4. Vent på beskeden om gatewayens VPN og egen åbne torrentport. IP'en bliver
+   gatewayens; torrentporten er forskellig fra web-/Minecraft-porten.
+5. Kontrollér, at downloads genoptages, og at eksisterende torrents seeder.
+   En tracker kan have behov for tid til at registrere ændret IP/port.
+
+FjordSeed bruger samme WireGuard-forbindelse og reserverer en separat direkte
+TCP/UDP-port hos Proton. Der skal ikke oprettes en Cloudflare-regel eller et
+torrentdomæne. Download/upload beskyttes af tun0-binding og Gluetuns firewall.
+Der sættes ingen ekstra hastighedsgrænser.
+
+Porten fornyes automatisk. Kan den ikke oprettes eller fornyes, stopper
+qBittorrent; den må aldrig falde tilbage til forbindelsen uden VPN. Både separat
+Seedbox-VPN og delt gateway forbliver valgmuligheder. Profilskift bevarer torrents,
+filer og RSS-indstillinger, men kan kort afbryde overførsler.
+
+Behold den gamle Seedbox-profil, mens du tester fra en peer på en anden
+internetforbindelse. Prøv TCP, krypteret TCP og µTP/UDP. Dit eget hjemmenets
+opslag til VPN-IP'en kan give misvisende UDP-resultater; denne prøve lykkedes
+fra en anden VPN's offentlige IP. Alle apps deler samme VPN-kapacitet, så lige
+store hastigheder ved samtidig streaming/download kan ikke garanteres.

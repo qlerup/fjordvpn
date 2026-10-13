@@ -10,13 +10,19 @@ def profiles(root):
     for path in sorted((Path(root) / 'profiles').glob('*/profile.json')):
         p = json.loads(path.read_text(encoding='utf-8'))
         item = {key: p[key] for key in fields}
-        # Gateways own the forwarded port; torrent clients need a separate profile.
-        if p.get('gateway',{}).get('enabled'):
+        # Old FjordSeed versions must keep rejecting the occupied first port.
+        # Updated clients may lease a separate non-symmetric NAT-PMP mapping.
+        item['gateway_enabled']=bool(p.get('gateway',{}).get('enabled'))
+        if item['gateway_enabled']:
             item['relay_enabled']=True
         try:
             status = json.loads((path.parent/'observed/status.json').read_text())
             item['status'] = {key: status.get(key) for key in ('healthy','checked_at','public_ip','public_port','country')}
-            item['status']['healthy'] = bool(status.get('healthy') and status.get('revision') == p.get('revision'))
+            # Gateway route/name edits do not change its WireGuard tunnel. The
+            # seedbox uses a separate port and still validates freshness + the
+            # live Gluetun health endpoint before running qBittorrent.
+            item['status']['healthy'] = bool(status.get('healthy') and
+                (item['gateway_enabled'] or status.get('revision') == p.get('revision')))
         except (OSError, ValueError):
             item['status'] = {'healthy': False}
         result.append(item)
