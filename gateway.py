@@ -148,6 +148,82 @@ class GatewaySync:
                 or str(latest.get('public_port'))!=str(observed['public_port'])):
             raise ValueError('Gatewayen ændrede sig. Afventer næste kontrol.')
 
+    def record_marker(self, profile):
+        return 'FjordVPN gateway '+profile['id']
+
+    def remember_record(self,profile,key,record,payload):
+        state=self.store.gateway_dns(profile['id'])
+        state['records'][key['zone_id']+':'+payload['name']]={
+            'domain':payload['name'],'zone_id':key['zone_id'],'key_id':key['id'],
+            'id':record['id'],'content':payload['content'],'proxied':payload['proxied'],
+            'comment':payload['comment']}
+        self.store.save_gateway_dns(profile['id'],state)
+
+    def cleanup(self,profile):
+        """Delete only recorded IDs whose contents and ownership still match."""
+        with self.store.lock:
+            if self.store.get(profile['id'])!=profile:
+                raise ValueError('Gatewayen ændrede sig. Afventer næste kontrol.')
+            state=self.store.gateway_dns(profile['id'])
+            config=profile['gateway'];current_zone=self.store.key(config['key_id'])['zone_id']
+            active={(current_zone,r['domain']) for r in config['routes']}
+            candidates={(r['zone_id'],r['domain']):r for r in state['records'].values()
+                        if (r['zone_id'],r['domain']) not in active}
+            candidates.update({(r['zone_id'],r['domain']):r for r in state['pending']})
+            groups={}
+            for (zone,domain),candidate in candidates.items():
+                # Re-adding or handing a hostname to another profile cancels deletion.
+                used=(zone,domain) in active or any(
+                    other['id']!=profile['id'] and (any(r['domain']==domain for r in other.get('gateway',{}).get('routes',[]))
+                    or (other.get('stream_sync',{}).get('enabled') and other['stream_sync']['domain']==domain))
+                    for other in self.store.all())
+                if (zone,domain) not in active:
+                    groups.setdefault(zone,{'key_id':candidate['key_id'],'candidates':[]})
+                if used:
+                    state['pending']=[r for r in state['pending'] if (r['zone_id'],r['domain'])!=(zone,domain)]
+                    if (zone,domain) not in active:
+                        state['records'].pop(zone+':'+domain,None)
+                    continue
+                groups[zone]['candidates'].append(candidate)
+            self.store.save_gateway_dns(profile['id'],state)
+            for zone,group in groups.items():
+                candidates=group['candidates']
+                key=self.store.key(config['key_id'] if zone==current_zone else group['key_id'])
+                if key['zone_id']!=zone:
+                    raise ValueError('Cloudflare-nøglen til oprydning har skiftet zone. Brug den oprindelige zone.')
+                token=key['token'];base='/zones/'+zone
+                ruleset=self.cf(token,'GET',base+'/rulesets/phases/http_request_origin/entrypoint',allow_missing=True)
+                owned=[r for r in (ruleset or {}).get('rules',[]) if r.get('ref')=='fjordvpn_gateway_'+profile['id']]
+                if len(owned)>1:
+                    raise ValueError('Cloudflare har flere regler for gatewayen. Kontrollér Origin Rules.')
+                if owned:
+                    remaining=[r['domain'] for r in config['routes'] if zone==current_zone and not r.get('fjordflix')]
+                    path=base+'/rulesets/'+ruleset['id']+'/rules/'+owned[0]['id']
+                    if remaining:
+                        rule={k:owned[0][k] for k in ('ref','description','action','action_parameters') if k in owned[0]}
+                        rule.update(expression='http.host in {'+' '.join(json.dumps(d) for d in remaining)+'}',enabled=True)
+                        if any(owned[0].get(k)!=v for k,v in rule.items()):
+                            self.cf(token,'PATCH',path,json=rule)
+                    else:
+                        self.cf(token,'DELETE',path,allow_missing=True)
+                for candidate in candidates:
+                    domain=candidate['domain'];ident=zone+':'+domain
+                    tracked=state['records'].get(ident)
+                    rows=self.cf(token,'GET',base+'/dns_records',params={'name':domain,'per_page':100})
+                    matches=bool(tracked) and len(rows)==1 and all(rows[0].get(k)==v for k,v in {
+                        'id':tracked['id'],'name':domain,'type':'A','content':tracked['content'],
+                        'proxied':tracked['proxied'],'comment':self.record_marker(profile)}.items())
+                    if matches:
+                        self.cf(token,'DELETE',base+'/dns_records/'+tracked['id'],allow_missing=True)
+                    elif rows:
+                        warning=domain+': DNS-recorden blev bevaret, fordi ejerskab eller indhold har ændret sig.'
+                        if warning not in state['warnings']:
+                            state['warnings'].append(warning)
+                    state['records'].pop(ident,None)
+                    state['pending']=[r for r in state['pending'] if (r['zone_id'],r['domain'])!=(zone,domain)]
+                    self.store.save_gateway_dns(profile['id'],state)
+            return state['warnings']
+
     def sync(self,profile,observed,route_status=None):
         config=profile['gateway'];key=self.store.key(config['key_id']);token=key['token']
         address=ipaddress.IPv4Address(observed['public_ip']);port=int(observed['public_port'])
@@ -159,6 +235,7 @@ class GatewaySync:
         web_domains=[r['domain'] for r in config['routes'] if not r.get('fjordflix')]
         if any(not d.endswith('.'+name) for d in domains):
             raise ValueError('Alle subdomæner skal tilhøre den valgte Cloudflare-zone.')
+        self.cleanup(profile)
         stream_state=None;stream_error=None
         try:
             stream_state=next((self.stream.stream_state(r['domain']) for r in config['routes'] if r.get('fjordflix')),None)
@@ -166,7 +243,7 @@ class GatewaySync:
             # A stopped FjordFlix app must not block updates for other webapps.
             # Keep its direct DNS untouched and report the error after web sync.
             stream_error=exc
-        # Inspect every DNS name before writing any of them. No record is deleted.
+        # Inspect every active DNS name before writing any of them.
         records=[]
         for domain in domains:
             rows=self.cf(token,'GET',zone+'/dns_records',params={'name':domain,'per_page':100})
@@ -181,7 +258,13 @@ class GatewaySync:
               'action':'route','action_parameters':{'origin':{'port':port}},'enabled':bool(web_domains)}
         with self.store.lock:
             self.current(profile,observed)
-            if ruleset is None:
+            if not web_domains:
+                owned=[r for r in (ruleset or {}).get('rules',[]) if r.get('ref')==ref]
+                if len(owned)>1:
+                    raise ValueError('Cloudflare har flere regler for gatewayen. Kontrollér Origin Rules.')
+                if owned:
+                    self.cf(token,'DELETE',zone+'/rulesets/'+ruleset['id']+'/rules/'+owned[0]['id'],allow_missing=True)
+            elif ruleset is None:
                 self.cf(token,'POST',zone+'/rulesets',json={'name':'FjordVPN origins','kind':'zone',
                     'phase':'http_request_origin','rules':[rule]})
             else:
@@ -198,12 +281,13 @@ class GatewaySync:
             if row.get('fjordflix') and stream_error:
                 continue
             proxied=not row.get('fjordflix',False)
-            payload={'type':'A','name':row['domain'],'content':str(address),'proxied':proxied,'ttl':1 if proxied else 60}
-            if record and record.get('content')==str(address) and record.get('proxied') is proxied:
-                continue
+            payload={'type':'A','name':row['domain'],'content':str(address),'proxied':proxied,
+                     'ttl':1 if proxied else 60,'comment':self.record_marker(profile)}
             with self.store.lock:
                 self.current(profile,observed)
-                self.cf(token,'PATCH' if record else 'POST',zone+'/dns_records'+('/'+record['id'] if record else ''),json=payload)
+                if not (record and all(record.get(k)==payload[k] for k in ('content','proxied','comment'))):
+                    record=self.cf(token,'PATCH' if record else 'POST',zone+'/dns_records'+('/'+record['id'] if record else ''),json=payload)
+                self.remember_record(profile,key,record,payload)
         if route_status is not None:
             for row in config['routes']:
                 if not row.get('fjordflix'):
@@ -271,5 +355,8 @@ class GatewaySync:
             message='Alle domæner er verificeret og online.' if state=='ready' else 'Et eller flere domæner har en fejl. Se status ved domænet.' if state=='error' else 'Opsætning og forbindelsestest er i gang. Se status ved domænet.'
             if not profile['gateway'].get('auto_sync',True):
                 message='Automatisk IP og port er slået fra. Cloudflare skal opdateres manuelt.'
+            warnings=self.store.gateway_dns(ident)['warnings']
+            if warnings:
+                message+=' Oprydning: '+' '.join(warnings[-5:])
             self.statuses[ident]={'ok':state=='ready','state':state,'message':message,'urls':urls,'routes':routes,
                 '_signature':signature,'_checked':time.monotonic()}

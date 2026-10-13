@@ -95,3 +95,19 @@ TLS/request behavior, error classification and stale-result rejection. The
 gateway browser suite passed at desktop/mobile widths with all three colors,
 accessible explanations and persisted settings. Existing streaming and legacy
 profile tests remain passing. No production profile or DNS was changed.
+
+## Automatic cleanup of removed gateway targets
+
+Active A-records are marked with a gateway comment and their record IDs,
+zone, IP and proxy mode are registered in a local `gateway-dns.json` ledger.
+Removing a target and saving queues cleanup durably. The next enabled automatic
+sync removes only unchanged owned records and updates/deletes only the gateway's
+own Origin Rule. Re-added targets and hostnames handed to another profile cancel
+their DNS deletion. Unknown legacy records and manually changed records are
+preserved with a visible explanation. Stopping a gateway alone still retains DNS.
+
+Cleanup tests cover deletion scope, unrelated-rule preservation, changed IP,
+proxy mode, comment, ID and record type, failed-request/restart recovery,
+re-adding, profile handoff, direct-media-only Origin Rule removal and replacement
+credentials in the same zone. All 95 Python tests and the gateway desktop/mobile
+browser suite passed. No production test domain was deleted during development.

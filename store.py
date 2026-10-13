@@ -114,6 +114,13 @@ class Store:
             atomic(folder/'relay/gateway-token',self.key(gateway['key_id'])['token'])
         atomic(folder / 'relay' / 'settings.json', json.dumps(relay))
 
+    def gateway_dns(self, ident):
+        path=self.directory(ident)/'gateway-dns.json'
+        return json.loads(path.read_text(encoding='utf-8')) if path.exists() else {'records':{},'pending':[],'warnings':[]}
+
+    def save_gateway_dns(self, ident, value):
+        atomic(self.directory(ident)/'gateway-dns.json',json.dumps(value))
+
     def prepare_gateway(self,data,previous=None):
         previous=previous or {}
         config=gateway_settings(data.get('gateway',previous.get('gateway',{'enabled':False})),self.networks)
@@ -207,6 +214,7 @@ class Store:
             p = self.get(ident)
             gateway=self.prepare_gateway(data,p)
             stream, token = self.prepare_stream(data, p)
+            old_gateway=p.get('gateway',{})
             p.update(validate_target(data, self.networks), revision=uuid.uuid4().hex)
             p['stream_sync'] = stream
             if gateway['enabled']:
@@ -214,6 +222,17 @@ class Store:
             if token:
                 atomic(self.directory(ident) / 'cloudflare-token', token)
             self.save(p)
+            if old_gateway.get('enabled'):
+                state=self.gateway_dns(ident);state['warnings']=[]
+                old_zone=self.key(old_gateway['key_id'])['zone_id']
+                new_zone=self.key(gateway['key_id'])['zone_id']
+                keep={r['domain'] for r in gateway['routes']} if old_zone==new_zone else set()
+                for row in old_gateway['routes']:
+                    if row['domain'] not in keep:
+                        entry={'domain':row['domain'],'zone_id':old_zone,'key_id':old_gateway['key_id']}
+                        if entry not in state['pending']:
+                            state['pending'].append(entry)
+                self.save_gateway_dns(ident,state)
             return p
 
     def power(self, ident, wanted):

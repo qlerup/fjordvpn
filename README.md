@@ -89,7 +89,9 @@ Cloudflare proxy skal være aktiv på gatewayens A-records. FjordVPN opretter
 eller opdaterer disse records og én egen Origin Rule, som sender almindelig
 HTTPS på port 443 til Protons aktuelt tildelte port. Derfor behøver browserens
 adresse intet portnummer. Andre Origin Rules erstattes ikke. Eksisterende CNAME,
-AAAA eller konkurrerende records afvises; ingen DNS-records slettes automatisk.
+AAAA eller konkurrerende records afvises. Fjernede gatewaymål får deres ejede
+A-record slettet og fjernes fra gatewayens Origin Rule ved næste synkronisering.
+Ændrede eller overtagne records bevares; stop af gatewayen sletter ikke DNS.
 Et subdomæne kan ikke overtages fra en anden FjordVPN-profil.
 
 Vælg en nøgle med **Zone / DNS / Edit**, **Zone / Zone / Read** og

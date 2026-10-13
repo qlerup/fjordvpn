@@ -2,7 +2,7 @@ let editingGateway=null;
 function gatewayRoute(row={}){
  const card=el('div','gateway-route');
  const top=el('div','gateway-route-heading'),title=el('strong','','Subdomæne og lokalt mål'),remove=el('button','text-button','Fjern mål');
- remove.type='button';remove.onclick=()=>card.remove();top.append(title,remove);card.append(top);
+ remove.type='button';remove.title='Fjernes fra gateway og Cloudflare, når du gemmer';remove.onclick=()=>card.remove();top.append(title,remove);card.append(top);
  function field(label,key,placeholder,value,type='text'){
   const wrapper=el('label','',label),input=el('input');input.type=type;input.dataset.gatewayField=key;input.placeholder=placeholder;input.value=value??'';wrapper.append(input);return [wrapper,input];
  }

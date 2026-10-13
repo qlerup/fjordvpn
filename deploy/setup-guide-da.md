@@ -183,7 +183,9 @@ streamdomæne uden at du først ændrer opsætningen i FjordHub.
 
 Rollback: fjern media-ruten fra gatewayen, genaktivér den gamle FjordFlix-VPNs
 automatiske DNS/streamsynkronisering, og vent på dens godkendte forbindelsestest.
-DNS-recorden slettes ikke, når en gatewayrute fjernes.
+Fjernede gatewayruter får deres ejede DNS-record slettet ved næste automatiske
+synkronisering. Ved rollback kan den gamle DNS-only profil kræve, at du først
+genskaber én A-record for media-domænet; den profil opretter ikke selv records.
 
 ## 10. Status på hvert gatewaydomæne
 
@@ -205,9 +207,26 @@ den tester ikke login eller fuld afspilning. Ved deaktiveret automatisk
 synkronisering vises orange med forklaring om, at opsætningen ikke er verificeret.
 
 Ved fejl: kontrollér korrekt Cloudflare-zone, tokenrettigheder, HTTP/HTTPS-valg,
-lokalt mål og tilladte værtsnavne. En gateway viser Online før alle certifikater
-nødvendigvis er udstedt. Stop af gatewayen sletter ikke DNS eller Origin Rules.
+lokalt mål og tilladte værtsnavne. Gatewaykortet viser først Online, når alle domæner er verificeret. Stop af gatewayen sletter ikke DNS eller Origin Rules.
 
 Referencer: [Origin Rules](https://developers.cloudflare.com/rules/origin-rules/),
 [destination port](https://developers.cloudflare.com/rules/origin-rules/features/#destination-port),
 [SRV-records](https://developers.cloudflare.com/dns/manage-dns-records/reference/dns-record-types/#srv).
+
+
+## 11. Fjern mål og ryd Cloudflare op
+
+Efter opdateringen: vent på grøn status, så eksisterende aktive DNS-records også
+bliver registreret med gatewayens ejerskab. Klik derefter **Fjern mål** på
+`test-a.gleruphub.dk` og `test-b.gleruphub.dk`, og tryk **Gem gateway**.
+Behold film/media. Når gatewayen kører med automatisk synkronisering slået til,
+fjerner næste kontrol de to ejede A-records og deres navne fra gatewayens egen
+Origin Rule. Andre regler og DNS-records ændres ikke. Stop af gatewayen alene
+sletter fortsat ikke DNS. Cloudflares DNS-cache kan kort vise gamle svar.
+
+Oprydningen gemmes lokalt og genoptages efter genstart eller API-fejl. En
+DNS-record slettes kun, hvis record-ID, A-type, navn, IP, proxystatus og
+Cloudflare-kommentar stadig matcher gatewayens registrering. Hvis en record er
+ændret, overtaget af en anden profil eller endnu ikke registreret som ejet,
+bevares den, og kortet forklarer det. Et mål, der tilføjes igen før oprydningen,
+får annulleret sin sletning. Gatewayen skal fortsat have mindst ét mål.
