@@ -61,7 +61,7 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
         public=request.endpoint in ('login','hub_login','logout','static','health')
         if not public and hub.enabled and session.get('authenticated'):
             try:
-                hub.current(session.get('hub_uid'))
+                member = hub.current(session.get('hub_uid'), force=request.path == '/api/auth/access' and request.args.get('fresh') == '1')
             except HubError as exc:
                 if exc.status!=503:
                     session.clear()
@@ -71,6 +71,9 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
                             return redirect('/login?access_removed=1')
                         return jsonify(error_code='access_revoked', authenticated=False, error=str(exc)),401
                 return jsonify(error=str(exc)),exc.status
+            if member.get('email_required') and request.endpoint != 'hub_email_update':
+                from hub_email import required_response
+                return required_response()
         if not public and not session.get('authenticated'):
             if request.endpoint == 'api_hub_access':
                 return jsonify(authenticated=False, error_code='access_revoked' if session.get('hub_access_revoked') else None), (401 if session.get('hub_access_revoked') else 200)
@@ -88,6 +91,19 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
     @app.get('/api/auth/access')
     def api_hub_access():
         return jsonify(ok=True, authenticated=bool(session.get('authenticated')))
+
+    @app.post('/api/auth/email')
+    def hub_email_update():
+        from hub_email import submit_email
+        if not hub.enabled:
+            return jsonify(ok=False, error='Kræver FjordHub-login.'), 403
+        try:
+            member = hub.current(session.get('hub_uid'), force=True)
+            response = submit_email(member, hub.call)
+            hub.expires = 0
+            return response
+        except HubError as exc:
+            return jsonify(ok=False, error=str(exc)), exc.status
 
     @app.errorhandler(413)
     def too_large(_):
