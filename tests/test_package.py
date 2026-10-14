@@ -1,6 +1,7 @@
 import ipaddress
 import json
 import sys
+import shlex
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -11,6 +12,17 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from runtime import Runtime, OWNER, LABEL
 from store import Store
 from test_app import config
+
+
+def test_docker_copy_sources_are_in_build_context():
+    root=Path(__file__).resolve().parents[1]
+    allowed={line.strip()[1:].rstrip('/') for line in (root/'.dockerignore').read_text().splitlines()
+             if line.startswith('!')}
+    for line in (root/'Dockerfile').read_text().splitlines():
+        if line.startswith('COPY ') and '--from=' not in line:
+            for source in shlex.split(line)[1:-1]:
+                assert (root/source).exists(),source
+                assert source in allowed,f'{source} is excluded from Docker build context'
 
 
 def test_packaged_runtime_uses_host_mounts_and_compose_ownership(tmp_path,monkeypatch):
