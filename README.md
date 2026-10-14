@@ -5,217 +5,100 @@
   </picture>
 </p>
 
-<p align="center">Flere Proton VPN-forbindelser. Ét lokalt overblik.<br>
-Upload WireGuard-konfigurationer, se offentlige adresser og videresend TCP-trafik til dine tjenester.</p>
+<p align="center">Multiple Proton VPN connections, one local dashboard.<br>Upload WireGuard profiles, inspect public addresses and forward traffic to your services.</p>
 
-## Installér i FjordHub
+## Install through FjordHub
 
-FjordVPN er en app i [FjordHub](https://github.com/qlerup/fjordhub).
+1. Choose **FjordVPN** from the [FjordHub](https://github.com/qlerup/fjordhub) catalog.
+2. Select port (default **8098**), private LAN CIDRs and data directory.
+3. Open through Hub for SSO.
+4. Create a VPN with a fresh Proton WireGuard `.conf` and NAT-PMP enabled.
+5. Optionally configure a local TCP target; start when ready.
 
-1. Opdatér appkataloget, og vælg **FjordVPN → Installér**.
-2. Vælg web-port (standard **8098**), lokalnet i CIDR-format og datamappe.
-3. Åbn appen fra FjordHub. SSO logger dig ind med din FjordHub-bruger.
-4. Vælg **Ny VPN**, og upload en ny Proton WireGuard `.conf` med **NAT-PMP** slået til.
-5. Vælg eventuelt et lokalt TCP-mål og start forbindelsen, når du er klar.
+Only app administrators or Hub administrators with app access can enter. Managed deployments use Hub accounts, first-login email/password setup and current role/membership checks. Central required-email updates show a mandatory form when opening or returning, including existing sessions; saving clears the requirement across updated apps. Update both Hub and VPN.
 
-Kun FjordVPN-administratorer eller FjordHub-administratorer med appadgang får
-adgang. FjordHub er loginmyndighed; lokale konti bruges ikke i en administreret
-installation. Fjernet adgang og rolleændringer kontrolleres løbende.
+Installation creates no profiles/tunnels and leaves VPN deployments on other hosts alone. The UI currently uses Danish labels.
 
-Installationen opretter **ingen VPN-profiler** og starter **ingen VPN-tunnel**.
-Eksisterende VPN-installationer på andre servere berøres ikke.
+## Requirements
 
-## Krav
+- Linux, Docker and Compose v2.
+- `/dev/net/tun` available to Docker with `NET_ADMIN` support.
+- Proton WireGuard configuration with IPv4 and NAT-PMP/port forwarding.
+- Private IPv4 LANs that do not overlap Proton's `10.2.0.0/24`.
 
-- Linux med Docker og Docker Compose v2.
-- Docker-værten skal have `/dev/net/tun` og understøtte `NET_ADMIN` i containere.
-- Proton VPN-konfiguration med WireGuard, IPv4-server og NAT-PMP/port forwarding.
-- Et privat IPv4-lokalnet, som ikke overlapper Protons `10.2.0.0/24`.
+Hub tests TUN access during installation and can provision it persistently for its own LXC through the configured Proxmox connection, without rebooting the running LXC. Standalone Proxmox deployment must pass TUN into the Docker LXC. On versions supporting device passthrough, use an **unused** `devN` slot, e.g. `pct set <CTID> --dev0 /dev/net/tun` only if free, then reboot that LXC when appropriate. FjordVPN itself does not alter Proxmox configuration.
 
-FjordHub kontrollerer TUN-adgang i Docker under installation af FjordVPN. Med
-FjordHubs Proxmox-forbindelse opsættes manglende adgang automatisk for FjordHubs
-egen LXC og bevares efter genstart. Den aktive LXC behøver ikke genstartes.
-
-Ved installation uden FjordHub skal TUN være givet videre til den LXC, som kører Docker.
-På Proxmox-versioner med device passthrough kan en **ledig** `devN`-plads bruges,
-fx `pct set <CTID> --dev0 /dev/net/tun`, hvis `dev0` ikke allerede er optaget.
-Genstart derefter den berørte LXC på et passende tidspunkt. FjordVPN ændrer
-ikke Proxmox-konfigurationen og genstarter ikke andre servere.
-
-## Selvstændig Docker-installation
-
-Land og flag følger Protons offentliggjorte [geofeed](https://ip.me/static/geofeeds/geofeed-mm.csv)
-for den aktive offentlige IP. Det er VPN-placeringen og ikke en påstand om
-serverens fysiske placering. Listen caches i seks timer; hvis IP'en ikke kan
-identificeres, vises landet som ukendt frem for et gæt fra en anden GeoIP-database.
+## Standalone deployment
 
 ```sh
 git clone https://github.com/qlerup/fjordvpn.git
 cd fjordvpn
 cp .env.example .env
-# Ret DATA_DIR til en absolut sti og LAN_SUBNETS til dit lokalnet.
+# Set DATA_DIR to an absolute path and LAN_SUBNETS to your LANs.
 docker compose up -d --build
 ```
 
-Åbn `http://SERVER-IP:8098`. Det første login er `admin`; en tilfældig adgangskode
-gemmes lokalt i `DATA_DIR/initial-login.txt`. Der er ingen standardadgangskode.
-Lad både `FJORDHUB_URL` og `FJORDHUB_API_KEY` være tomme ved selvstændig drift.
+Open `http://SERVER-IP:8098`, username `admin`; the random first password is in `DATA_DIR/initial-login.txt`. There is no shared default password. Leave both Hub URL/key empty for standalone mode.
 
-| Indstilling | Formål |
-|---|---|
-| `APP_PORT` | Webport, standard 8098 |
-| `DATA_DIR` | Absolut værtssti til private VPN-konfigurationer og tilstand |
-| `LAN_SUBNETS` | Tilladte private IPv4-net, kommaadskilt |
-| `UI_ALLOWED_HOSTS` | Valgfri liste med domæner og IP'er; tom accepterer lokalnet-IP'er |
-| `FJORDHUB_URL`, `FJORDHUB_API_KEY` | Udfyldes automatisk af FjordHub |
+| Setting | Purpose |
+| --- | --- |
+| `APP_PORT` | Web port, default 8098. |
+| `DATA_DIR` | Absolute host path for private profiles/state. |
+| `LAN_SUBNETS` | Comma-separated allowed private IPv4 networks. |
+| `UI_ALLOWED_HOSTS` | Optional allowed domains/IPs; empty permits LAN IPs. |
+| `FJORDHUB_URL`, `FJORDHUB_API_KEY` | Supplied by Hub in managed deployment. |
 
-## Forbindelser og videresendelse
+Flags/countries use Proton's [geofeed](https://ip.me/static/geofeeds/geofeed-mm.csv) for the active exit IP, cached six hours. Unknown locations stay unknown; this identifies the VPN location, not proven physical server geography.
 
-### Nye VPN-gateways til flere webapps
+## Shared HTTPS gateways
 
-Se den danske [opsætnings- og testguide](deploy/setup-guide-da.md) for webapps,
-flere domæner og Minecraft Java. Gatewayens **Opdater automatisk IP og port**
-kan slås til/fra. TCP-profiler kan vælge automatisk Minecraft-SRV-port via
-**Opdater også Minecraft Java-port (SRV)** sammen med automatisk DNS.
+Create a separate VPN gateway with a fresh Proton configuration and up to 25 hostname targets, e.g. `app.example.com → http://192.168.1.110:8099`. Caddy routes HTTP/HTTPS and WebSockets by hostname; unknown hosts have no default target. A gateway stays off unless Start gateway is selected. The existing [setup guide](deploy/setup-guide-da.md) covers deployment/testing; that separate guide currently remains in Danish.
 
-**Ny VPN-gateway** ved siden af **Ny VPN** opretter en separat profil med en
-ny Proton-konfiguration. Tilføj op til 25 mål som `app.example.com →
-http://192.168.1.110:8099`. Hvert subdomæne får samme offentlige VPN-IP som
-origin i Cloudflare, mens Caddy fordeler HTTPS efter værtsnavnet til det rigtige
-lokale HTTP- eller HTTPS-mål. WebSocket-forbindelser understøttes af Caddy.
-Ukendte værtsnavne får ingen adgang til et standardmål.
+Cloudflare must proxy the gateway A records. FjordVPN creates/updates owned records and one owned Origin Rule, routing public port 443 to the current Proton port without browser port numbers. Unrelated rules remain; conflicting CNAME/AAAA/other records are rejected. Removed targets lose only owned A records/rule entries at the next sync. Changed/taken-over records remain; stopping the gateway does not erase DNS, and another profile's hostname cannot be taken over.
 
-Cloudflare proxy skal være aktiv på gatewayens A-records. FjordVPN opretter
-eller opdaterer disse records og én egen Origin Rule, som sender almindelig
-HTTPS på port 443 til Protons aktuelt tildelte port. Derfor behøver browserens
-adresse intet portnummer. Andre Origin Rules erstattes ikke. Eksisterende CNAME,
-AAAA eller konkurrerende records afvises. Fjernede gatewaymål får deres ejede
-A-record slettet og fjernes fra gatewayens Origin Rule ved næste synkronisering.
-Ændrede eller overtagne records bevares; stop af gatewayen sletter ikke DNS.
-Et subdomæne kan ikke overtages fra en anden FjordVPN-profil.
+Use a zone-scoped token with **Zone / DNS / Edit**, **Zone / Zone / Read** and **Zone / Origin Rules / Edit**, and Full (strict) TLS. ACME DNS-01 issues/renews certificates; state is in `observed/caddy-data`. The token is mounted privately and not exposed to the browser or embedded in Caddy configuration. Local HTTPS targets require valid certificates and the appropriate certificate hostname; verification cannot be disabled. Apps must allow their public hostname/origin.
 
-Vælg en nøgle med **Zone / DNS / Edit**, **Zone / Zone / Read** og
-**Zone / Origin Rules / Edit**, begrænset til den relevante zone. Cloudflare
-skal være indstillet til **Full (strict)** SSL/TLS. Certifikater udstedes og
-fornyes automatisk med ACME DNS-01; certifikatdata gemmes under profilens
-`observed/caddy-data`. DNS-nøglen monteres som en privat fil og returneres aldrig
-til browseren eller placeres i Caddy-konfigurationen som klartekst.
+Gateway web ingress is restricted to Cloudflare source networks. Per-domain indicators report verified readiness. The gateway's automatic IP/port synchronization can be enabled or paused.
 
-Gatewayen er slukket ved oprettelse, medmindre **Start gateway** vælges.
-Et lokalt HTTPS-mål skal have et gyldigt certifikat; angiv certifikatets navn,
-hvis det afviger fra det offentlige subdomæne. Der er ingen mulighed for at
-slå certifikatkontrol fra. Lokale apps skal tillade deres nye værtsnavn og være
-konfigureret til deres offentlige HTTPS-adresse.
+### Minecraft Java on the same gateway
 
-Eksisterende profiler beholder deres type, konfiguration, TCP-relay og
-FjordFlix-synkronisering. En opdateret FjordSeed kan dele gatewayens VPN og
-reservere en ekstra åben TCP/UDP-torrentport via NAT-PMP. Gatewayens første
-port bruges fortsat til HTTPS/Minecraft; torrents benytter deres egen direkte
-port. En separat Seedbox-VPN kan fortsat vælges. FjordFlix' eksisterende direkte
-streamingopsætning kan fortsætte på sin nuværende profil; den flyttes ikke
-automatisk til Cloudflare-proxyen.
+The Gameserver section routes one local Java server through the same VPN IP/port as HTTPS. It may use another Cloudflare zone and saved token with DNS Edit/Zone Read. Automation manages DNS-only A/SRV records and checks the public status response. Bedrock/UDP forwarding is not implemented. TCP profiles can also enable automatic Minecraft SRV-port updates with DNS sync.
 
-Gatewayens særskilte **Gameserver**-sektion med typen Minecraft Java sender spiltrafik til én
-lokal Java-server gennem samme VPN-IP og port som HTTPS. Minecraft kan bruge
-en anden Cloudflare-zone med sin egen gemte nøgle (DNS Edit og Zone Read).
-Automatikken opretter/opdaterer DNS-only A og Minecraft-SRV og kontrollerer
-serverens offentlige statussvar. Bedrock/UDP understøttes ikke.
+The image bundles Caddy 2.11.4, Cloudflare module 0.2.4 and caddy-l4 0.1.2. Systemd deployments must build `fjordvpn-app:local` or select `FJORDVPN_GATEWAY_IMAGE`; older TCP relays retain their relay image. Updating the manager briefly restarts its tunnels, so schedule around active services.
 
-Docker-imaget indeholder Caddy 2.11.4 med Cloudflare-modulet 0.2.4 og
-caddy-l4 0.1.2 til deling af porten mellem HTTPS og Minecraft Java.
-Ved systemd-drift skal dette image først bygges som `fjordvpn-app:local`,
-eller vælges med `FJORDVPN_GATEWAY_IMAGE`; gamle TCP-relays bruger fortsat deres
-eksisterende relay-image. En normal opdatering af den eksisterende manager
-stopper dens administrerede tunneler kort under genstart. Planlæg derfor
-opdateringen særskilt, hvis de eksisterende forbindelser skal være uafbrudte.
+### FjordSeed on the shared VPN
 
-Teknisk reference: [Cloudflare Origin Rules](https://developers.cloudflare.com/rules/origin-rules/)
-og [destination port](https://developers.cloudflare.com/rules/origin-rules/features/#destination-port).
+An updated FjordSeed can reserve an independent NAT-PMP TCP/UDP torrent port on the gateway VPN. HTTPS/Minecraft retain their first port; torrents use a separate direct port. A dedicated seedbox profile remains available. Existing direct Flix profiles are not automatically moved to a proxied gateway.
 
-Hver profil får sin egen Gluetun-container og et TCP-relay i samme
-netværksnamespace. Dashboardet forbliver tilgængeligt, selv om en VPN er slukket.
-En profil kan sende den offentlige Proton-port til ét lokalt `IP:port`-mål.
-En reverse proxy på målet kan fordele HTTPS-trafik mellem flere tjenester.
+Gateway cards show FjordSeed attachment, torrent port and green/orange/red/gray readiness. Green requires fresh worker status, matching namespace/generation, public IP and port; it is operational proof rather than a continuous speed test.
 
-Relayet lukker ved et mislykket VPN-healthcheck og følger ændringer i den
-tildelte port. Den lokale servers øvrige udgående trafik ændres ikke.
-IPv6 udelades fra importerede profiler. OpenVPN og UDP-relay indgår ikke.
-IP/port kan skifte hos Proton. HTTPS-certifikater håndteres fortsat af din gateway.
+## Dedicated TCP forwarding and direct Flix delivery
 
-### Automatisk Cloudflare DNS og FjordFlix
+Each VPN profile owns a Gluetun namespace and optional TCP relay to one LAN `IP:port`; a reverse proxy at the target can distribute HTTPS. The UI stays available while VPNs are off. Failed health checks close the relay, and assigned-port changes are followed. Other server outbound traffic is unchanged. Imported IPv6 is excluded; OpenVPN and generic UDP relays are unsupported. IP/port can change; your gateway supplies HTTPS.
 
-Åbn menuen **Cloudflare-nøgler**, og gem et navn, Cloudflare Zone ID og et
-API-token med **Zone / DNS / Edit**, begrænset til den relevante zone. Zone ID
-findes på domænets oversigt i Cloudflare. Gemte tokens returneres aldrig til
-browseren. Ved redigering bevarer et tomt tokenfelt det eksisterende token.
+### Cloudflare keys and synchronization
 
-Under oprettelse eller **Indstillinger** på en VPN: aktivér automatisk DNS,
-indtast domænet og vælg en gemt nøgle. Flere VPN'er kan bruge samme nøgle
-til forskellige domæner i zonen. Tokenrotation foretages centralt. Zone ID
-kan ikke ændres på en nøgle i brug; opret i stedet en anden nøgle.
-Eksisterende profilnøgler importeres automatisk ved opstart. Den tidligere
-fil bevares af hensyn til tilbagerulning; den aktive opsætning bruger den
-centrale nøgle. Nøglefiler gemmes lokalt med rettighed 0600.
+Save named Zone IDs/API tokens under Cloudflare keys. Blank edits preserve tokens; files use mode 0600 and secrets never return to the UI. Multiple profiles may share a key for different names. Rotate centrally; a key's zone cannot change while used. Existing per-profile keys migrate, retaining the old file for rollback.
 
-DNS kræver præcis én eksisterende A-record for domænet. FjordFlix-valget
-kræver desuden aktiv TCP-videresendelse til din HTTPS-gateway og samme
-videodomæne opsat via FjordHubs streamguide. FjordFlix-containeren skal hedde `fjordflix` og være på
-samme Docker-vært. Automatikken er slået fra som standard. Hver VPN kan styre sit eget domæne.
-DNS alene kræver hverken TCP-relay, en HTTPS-gateway eller FjordFlix.
-Det separate valg **Opdater også FjordFlix' streamport** kan aktiveres på én
-VPN ad gangen. To VPN’er kan ikke styre samme DNS-navn. Eksisterende
-streamopsætninger beholder FjordFlix-valget efter opdatering.
+For a TCP profile, automatic DNS requires exactly one existing A record. DNS-only synchronization needs no relay or Flix. Optional Flix stream-port sync requires a relay to an HTTPS gateway, the matching Hub-configured media domain, and `fjordflix` on the same Docker host. Only one profile may control its stream port; two profiles cannot control the same DNS name. Defaults are off; existing stream-sync choices survive updates.
 
-FjordVPN kontrollerer cirka hvert 30. sekund, retter IP-adressen i Cloudflare
-med DNS-only og tester den nye HTTPS-adresse med et engangssvar fra FjordFlix.
-Først efter en bestået test opdateres porten i FjordFlix. Webadressen bevares.
-DNS-udbredelse kan forsinke skiftet. Fejl vises på VPN-kortet og prøves igen
-automatisk; ingen DNS-records slettes. Cloudflare gemmer IP'en, mens porten
-gemmes i FjordFlix. Ved portskift kan en igangværende afspilning skulle startes
-igen. FjordHubs manuelle guide viser fortsat dens senest gemte manuelle valg.
+Roughly every 30 seconds the app updates the DNS-only address, verifies the new HTTPS endpoint with a one-use Flix proof, then updates Flix's media port. Failed proof leaves playback configuration alone and retries. DNS propagation may delay switching; current streams may need reopening after port changes. The manual Hub guide retains its last manually saved choices. Gateway sharing also supports direct Flix targets configured for their media route.
 
-API: https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/edit/
+References: [Origin Rules](https://developers.cloudflare.com/rules/origin-rules/), [destination ports](https://developers.cloudflare.com/rules/origin-rules/features/#destination-port), [DNS updates](https://developers.cloudflare.com/api/resources/dns/subresources/records/methods/edit/).
 
-Brug ikke samme Proton-nøgle i to aktive installationer. Appen afviser dubletter
-blandt sine egne profiler, men har ingen adgang til andre VPN-servere. Brug
-separate konfigurationer, mens gamle installationer stadig kører.
+Do not reuse one Proton key in simultaneous deployments. Local duplicates are rejected, but the app cannot detect usage on other servers.
 
-## Slet en VPN-profil
+## Delete, stop and back up
 
-Sluk profilen, vent på **Slukket**, og vælg **Slet** på kortet. Bekræft sletningen.
-Profilens private konfiguration, lokale data og dens ejede containere fjernes.
-Andre profiler, fælles Cloudflare-nøgler, DNS og regler beholdes. Skal gatewayens
-DNS også fjernes, så fjern først målene og gem, mens automatisk synkronisering
-kører. Sletning af en gammel VPN ændrer dermed ikke en ny gateways domæner.
+Turn a profile off, wait for Off and confirm Delete. This removes its private configuration, local state and owned containers. Other profiles, shared keys, DNS and rules remain. To remove owned gateway DNS too, first remove/save its targets while synchronization runs.
 
-## Data, stop og afinstallation
+Back up `DATA_DIR` privately: it contains keys, profiles and login state. It uses the same host path in VPN containers. Strict upload parsing rejects shell hooks/unrecognized configuration sections; secrets are omitted from API/errors.
 
-`DATA_DIR` indeholder private nøgler, profiler og loginoplysninger. Beskyt backup
-af denne mappe. Den monteres med samme værtssti i de enkelte VPN-containere.
-Nøgler vises ikke i API-svar, browseren eller fejlbeskeder. Uploads fortolkes
-strengt som konfiguration; shell-hooks og ekstra sektioner afvises.
+Docker/Hub shutdown stops owned child containers. Desired states persist and resume at startup; children carry Compose ownership labels. Hub uninstall or `docker compose down --remove-orphans` removes runtime but keeps mounted state/keys.
 
-I Docker/FjordHub stopper appens nedlukning også dens egne VPN-containere.
-Den ønskede tænd/sluk-tilstand gemmes, så profiler genoptages ved opstart.
-Appens børnecontainere er mærket med dens Compose-projekt. Afinstallation via
-FjordHub fjerner runtime med `down --remove-orphans`, men bevarer data og nøgler.
-`docker compose down --remove-orphans` gør det samme ved manuel drift.
+Docker socket access makes this host administration software. Use trusted LAN access or HTTPS/authentication before public exposure. The UI has no Proxmox key. The alternative `deploy/` systemd installation stops only the UI when its service stops; disable tunnels in the app separately. Never run Docker and systemd against one data directory simultaneously.
 
-Dashboardet har adgang til Docker-socket og skal behandles som administration
-af Docker-værten. Brug det på et betroet lokalnet; sæt HTTPS og adgangskontrol op
-før eventuel ekstern eksponering. Docker-data og UI har ingen Proxmox-nøgle.
-
-Den alternative systemd-installation i `deploy/` kan bruges på en dedikeret LXC.
-Her stopper stop af UI-servicen kun UI'et; sluk profiler i appen for også at stoppe
-tunnelerne. Brug aldrig systemd og Docker-udgaven på samme datamappe samtidig.
-
-## Ikoner og logoer
-
-[Brandmappen](static/brand/) indeholder originale SVG-logoer til lys/mørk
-baggrund, et transparent symbol, PNG-appikoner fra 16 til 1024 px, favicon og
-webmanifest. De kan gendannes med `python tools/build_brand.py`.
-
-## Udvikling og test
+## Development and artwork
 
 ```sh
 python -m venv .venv
@@ -226,9 +109,4 @@ python -m venv .venv
 .venv/bin/python tests/browser_check.py
 ```
 
-Tests dækker upload, validering, dubletter, login/CSRF, FjordHub-SSO og
-adgangstilbagekaldelse, adskilte Docker-ressourcer og værtssti-mapping.
-Browserkontrollen bruger syntetiske profiler ved desktop- og mobilbredde.
-Pakkeinstallation og oprydning kontrolleres isoleret uden at starte en VPN.
-
-Gatewaykortet viser også tilknyttet FjordSeed med egen TCP/UDP-torrentport og grøn, orange, rød eller grå status. Grøn kræver en frisk qBittorrent-workerstatus, korrekt VPN-namespace og generation samt matchende offentlig IP og torrentport. Det er en driftskontrol, ikke en løbende ekstern hastighedstest. Visningen kræver kun opdatering af FjordVPN, når FjordSeed allerede understøtter delt gateway.
+Tests cover configuration validation, duplicates, CSRF/login, Hub SSO/revocation, resource isolation and host-path mapping with synthetic mobile/desktop fixtures. Installation/cleanup checks do not start a real VPN. See [branding](branding/README.md) and [legacy asset paths](static/brand/README.md); rebuild assets with `python tools/build_brand.py`.
