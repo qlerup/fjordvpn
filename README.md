@@ -110,3 +110,16 @@ python -m venv .venv
 ```
 
 Tests cover configuration validation, duplicates, CSRF/login, Hub SSO/revocation, resource isolation and host-path mapping with synthetic mobile/desktop fixtures. Installation/cleanup checks do not start a real VPN. See [branding](branding/README.md) and [legacy asset paths](static/brand/README.md); rebuild assets with `python tools/build_brand.py`.
+
+
+### FjordHub Matrix notifications
+
+When managed by FjordHub, VPN profiles are checked by the existing
+3-second lifecycle monitor. Sustained faults generate one grouped notification
+containing the *names* of failing profiles (not configuration or credentials).
+Recovery generates a separate message. Manually stopped profiles are ignored.
+Transient connection attempts are given 60 seconds; explicit errors 12 seconds.
+The `event_notifier.py` durable queue survives restarts and retries a down
+FjordHub without interrupting VPN connectivity. Delivery uses the existing
+`FJORDHUB_URL`/`FJORDHUB_API_KEY` settings; no additional secret is needed.
+Update FjordHub first so the authenticated notification API is available.

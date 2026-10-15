@@ -12,6 +12,7 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from hub import Hub, HubError
 from configuration import parse_networks
 from runtime import Runtime
+from event_notifier import EventNotifier
 from store import Store, atomic
 from stream_sync import StreamSync
 from gateway import GatewaySync
@@ -239,6 +240,8 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
             return jsonify(error=str(e)),400
 
     stop_event=threading.Event()
+    notifier=EventNotifier(root,hub,'fjordvpn')
+    app.extensions['event_notifier']=notifier
     stream_sync = StreamSync(store, runtime)
     gateway_sync = GatewaySync(store,runtime)
     app.extensions['gateway_sync']=gateway_sync
@@ -272,10 +275,17 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
                 runtime.tick()
             except Exception:
                 app.logger.error('Driftskontrol fejlede; prøver igen.')
+            try:
+                with store.lock:
+                    statuses=[runtime.status(p) for p in store.all()]
+                notifier.observe_vpn(statuses)
+            except Exception:
+                app.logger.exception('FjordVPN notifikationskontrol fejlede.')
             stop_event.wait(3)
 
     if not testing:
         threading.Thread(target=worker,daemon=True).start()
+        threading.Thread(target=notifier.run,args=(stop_event,),daemon=True).start()
         def sync_worker():
             while not stop_event.is_set():
                 try:
