@@ -27,8 +27,8 @@ def test_tcp_is_opt_in_saved_to_observer_and_can_be_disabled(tmp_path):
     store, key = store_with_key(tmp_path)
     p = store.create({'name': 'Gateway', 'gateway': gateway(key, tcp=TARGET)}, config())
     path = store.directory(p['id']) / 'relay/settings.json'
-    assert json.loads(path.read_text())['tcp'] == TARGET
-    assert store.get(p['id'])['gateway']['tcp'] == TARGET
+    assert json.loads(path.read_text())['tcp']['targets'] == [{'id':'0','name':'TCP','host':TARGET['host'],'port':TARGET['port']}]
+    assert store.get(p['id'])['gateway']['tcp']['targets'][0]['host'] == TARGET['host']
     store.edit(p['id'], {'name': p['name'], 'gateway': {**p['gateway'], 'tcp': {'enabled': False}}})
     assert json.loads(path.read_text())['tcp'] == {'enabled': False}
 
@@ -179,6 +179,6 @@ def test_runtime_does_not_publish_stale_tcp_endpoint(tmp_path, change, ready):
     rt.client.containers.get.return_value = Mock(status='running', labels={
         'dk.fjordvpn.managed':'1', 'dk.fjordvpn.profile':p['id']})
     rt.client.containers.list.return_value = []
-    status = rt.status(p)['tcp_status']
+    status = rt.status(p)['tcp_status']['0']
     assert (status['state'] == 'ready') is ready
     assert (status['public_port'] == 62000) is ready

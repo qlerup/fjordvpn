@@ -9,6 +9,7 @@ import requests
 from configuration import validate_target
 from stream_sync import StreamSync,StreamPending
 from minecraft_gateway import public_probe
+from relay.gateway_tcp import target_rows, MAX_TARGETS
 
 
 DOMAIN = re.compile(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}')
@@ -30,6 +31,18 @@ def hostname(value):
     return value.strip().lower()
 
 
+def game_rows(config):
+    legacy=config.get('minecraft',{})
+    return ([legacy] if legacy.get('enabled') else []) + config.get('gameservers',[])
+
+
+def forwarding_config(config):
+    rows=list(target_rows(config.get('tcp',{})))
+    rows.extend({'id':'g'+row['id'],'name':row['domain'],'host':row['host'],'port':row['port']}
+                for row in config.get('gameservers',[]))
+    return {'enabled':bool(rows),'targets':rows}
+
+
 def settings(value, networks):
     if not isinstance(value, dict) or type(value.get('enabled')) is not bool:
         raise ValueError('Ugyldige gatewayindstillinger.')
@@ -42,8 +55,8 @@ def settings(value, networks):
     if not isinstance(key,str) or not re.fullmatch('[a-f0-9]{32}',key):
         raise ValueError('Vælg en gemt Cloudflare-nøgle til gatewayen.')
     routes=value.get('routes')
-    if not isinstance(routes,list) or not 1<=len(routes)<=25:
-        raise ValueError('Tilføj mellem 1 og 25 subdomæner til gatewayen.')
+    if not isinstance(routes,list) or len(routes)>25:
+        raise ValueError('En gateway kan have op til 25 subdomæner.')
     result=[];seen=set()
     for row in routes:
         if not isinstance(row,dict):
@@ -83,15 +96,59 @@ def settings(value, networks):
         if not isinstance(mc_key,str) or not re.fullmatch('[a-f0-9]{32}',mc_key):
             raise ValueError('Vælg en Cloudflare-nøgle til Minecraft-domænet.')
         mc={'enabled':True,'domain':domain,'host':target['host'],'port':target['port'],'key_id':mc_key}
+        seen.add(domain)
+    games=value.get('gameservers',[])
+    if not isinstance(games,list) or len(games)+(1 if mc.get('enabled') else 0)>25:
+        raise ValueError('En gateway kan have op til 25 gameservere.')
+    game_targets=[];game_ids=set()
+    for row in games:
+        if not isinstance(row,dict):
+            raise ValueError('Ugyldig gameserver.')
+        ident=row.get('id')
+        if not isinstance(ident,str) or not re.fullmatch(r'(?:[0-9]|1[0-9]|2[0-4])',ident) or ident in game_ids:
+            raise ValueError('Gameservere skal have hver sin gyldige identitet.')
+        domain=hostname(row.get('domain'))
+        if domain in seen:
+            raise ValueError('Hvert domæne må kun have ét mål.')
+        target=validate_target({'name':domain[:64],'host':row.get('host'),'port':row.get('port'),'relay_enabled':True},networks)
+        game_key=row.get('key_id') or key
+        if not isinstance(game_key,str) or not re.fullmatch('[a-f0-9]{32}',game_key):
+            raise ValueError('Vælg en Cloudflare-nøgle til gameserveren.')
+        game_targets.append({'id':ident,'domain':domain,'host':target['host'],'port':target['port'],'key_id':game_key})
+        seen.add(domain);game_ids.add(ident)
     tcp=value.get('tcp',{'enabled':False})
     if not isinstance(tcp,dict) or type(tcp.get('enabled')) is not bool:
         raise ValueError('Vælg om TCP-videresendelse skal aktiveres.')
     direct={'enabled':False}
     if tcp['enabled']:
-        target=validate_target({'name':'TCP','host':tcp.get('host'),'port':tcp.get('port'),
-                                'relay_enabled':True},networks)
-        direct={'enabled':True,'host':target['host'],'port':target['port']}
-    return {'enabled':True,'key_id':key,'routes':result,'auto_sync':auto,'minecraft':mc,'tcp':direct}
+        rows=target_rows(tcp)
+        if not isinstance(rows,list) or not 1 <= len(rows) <= MAX_TARGETS:
+            raise ValueError('Tilføj mellem 1 og 25 TCP-mål.')
+        targets=[];ids=set()
+        for row in rows:
+            if not isinstance(row,dict):
+                raise ValueError('Ugyldigt TCP-mål.')
+            ident=row.get('id')
+            if not isinstance(ident,str) or not re.fullmatch(r'(?:[0-9]|1[0-9]|2[0-4])',ident) or ident in ids:
+                raise ValueError('TCP-mål skal have hver sin gyldige identitet.')
+            ids.add(ident)
+            target=validate_target({'name':row.get('name','TCP'),'host':row.get('host'),'port':row.get('port'),
+                                    'relay_enabled':True},networks)
+            targets.append({'id':ident,'name':target['name'],'host':target['host'],'port':target['port']})
+        direct={'enabled':True,'targets':targets}
+    if not result and not mc.get('enabled') and not game_targets and not direct['enabled']:
+        raise ValueError('Tilføj mindst ét mål til gatewayen.')
+    order=['web:'+r['domain'] for r in result]+['tcp:'+r['id'] for r in target_rows(direct)]
+    order+=(['game:legacy'] if mc.get('enabled') else [])+['game:'+r['id'] for r in game_targets]
+    requested=value.get('target_order')
+    if requested is not None:
+        if (not isinstance(requested,list) or any(not isinstance(k,str) for k in requested)
+                or len(requested)!=len(set(requested))):
+            raise ValueError('Ugyldig rækkefølge for gatewayens mål.')
+        # Older API clients can add/remove targets without sending layout data.
+        order=[k for k in requested if k in order]+[k for k in order if k not in requested]
+    return {'enabled':True,'key_id':key,'routes':result,'auto_sync':auto,'minecraft':mc,'tcp':direct,
+            'gameservers':game_targets,'target_order':order}
 
 
 def process_key(config, port, token):
@@ -156,7 +213,10 @@ class GatewaySync:
         self.progress={}
 
     def signature(self,profile,observed):
-        return (profile['revision'],observed.get('public_ip'),str(observed.get('public_port')))
+        ports=tuple((row['id'],observed.get('tcp_status',{}).get(row['id'],{}).get('state'),
+                     observed.get('tcp_status',{}).get(row['id'],{}).get('public_port'))
+                    for row in target_rows(forwarding_config(profile['gateway'])))
+        return (profile['revision'],observed.get('public_ip'),str(observed.get('public_port')),ports)
 
     def status(self,profile,observed):
         """Never expose readiness checked for an old configuration or VPN endpoint."""
@@ -215,7 +275,8 @@ class GatewaySync:
         fresh=self.store.get(profile['id']);latest=self.runtime.status(fresh)
         if (fresh!=profile or latest.get('state')!='online' or not latest.get('relay_active')
                 or latest.get('public_ip')!=observed['public_ip']
-                or str(latest.get('public_port'))!=str(observed['public_port'])):
+                or str(latest.get('public_port'))!=str(observed['public_port'])
+                or self.signature(profile,latest)!=self.signature(profile,observed)):
             raise ValueError('Gatewayen ændrede sig. Afventer næste kontrol.')
 
     def record_marker(self, profile):
@@ -242,8 +303,7 @@ class GatewaySync:
             config=profile['gateway'];current_zone=self.store.key(config['key_id'])['zone_id']
             active={(current_zone,r['domain']) for r in config['routes']}
             active_keys={current_zone:config['key_id']}
-            mc=config.get('minecraft',{})
-            if mc.get('enabled'):
+            for mc in game_rows(config):
                 mc_zone=self.store.key(mc['key_id'])['zone_id'];active_keys.setdefault(mc_zone,mc['key_id'])
                 active.update({(mc_zone,mc['domain']),(mc_zone,'_minecraft._tcp.'+mc['domain'])})
             candidates={(r['zone_id'],r['domain']):r for r in state['records'].values()
@@ -256,7 +316,7 @@ class GatewaySync:
                 used=(zone,domain) in active or any(
                     other['id']!=profile['id'] and (any(r['domain']==base_domain for r in other.get('gateway',{}).get('routes',[]))
                     or (other.get('stream_sync',{}).get('enabled') and other['stream_sync']['domain']==base_domain)
-                    or (other.get('gateway',{}).get('minecraft',{}).get('enabled') and other['gateway']['minecraft']['domain']==base_domain))
+                    or any(r['domain']==base_domain for r in game_rows(other.get('gateway',{}))))
                     for other in self.store.all())
                 if (zone,domain) not in active:
                     groups.setdefault(zone,{'key_id':candidate['key_id'],'candidates':[]})
@@ -413,12 +473,30 @@ class GatewaySync:
                 if route_status is not None:
                     route_status[mc['domain']]=self.failure(profile,observed,mc,exc)
                 errors.append(exc)
+        for game in config.get('gameservers',[]):
+            try:
+                status=observed.get('tcp_status',{}).get('g'+game['id'],{})
+                if status.get('state')!='ready':
+                    raise StreamPending('Afventer gameserverens egen VPN-port.')
+                port=status.get('public_port')
+                if type(port) is not int or not 1<=port<=65535:
+                    raise StreamPending('Afventer gyldig gameserverport.')
+                version=self.sync_minecraft(profile,observed,game,port)
+                if route_status is not None:
+                    route_status[game['domain']]={'state':'ready','message':'Minecraft Java svarer. DNS og serverport er opdateret.','version':version,'public_port':port}
+                urls.append('minecraft://'+game['domain'])
+            except Exception as exc:
+                if route_status is not None:
+                    route_status[game['domain']]=self.failure(profile,observed,game,exc)
+                errors.append(exc)
         if errors:
             raise errors[0]
         return urls
 
-    def sync_minecraft(self,profile,observed):
-        mc=profile['gateway']['minecraft'];key=self.store.key(mc['key_id']);token=key['token']
+    def sync_minecraft(self,profile,observed,mc=None,port=None):
+        mc=mc if mc is not None else profile['gateway']['minecraft']
+        port=int(observed['public_port']) if port is None else port
+        key=self.store.key(mc['key_id']);token=key['token']
         zone='/zones/'+key['zone_id'];domain=mc['domain'];name=self.cf(token,'GET',zone)['name'].lower()
         if domain!=name and not domain.endswith('.'+name):
             raise ValueError('Minecraft-domænet tilhører ikke den valgte Cloudflare-zone.')
@@ -432,7 +510,7 @@ class GatewaySync:
         payloads=[{'type':'A','name':domain,'content':observed['public_ip'],'proxied':False,'ttl':60,
                    'comment':self.record_marker(profile)},
                   {'type':'SRV','name':srv,'ttl':60,'comment':self.record_marker(profile),
-                   'data':{'priority':0,'weight':0,'port':int(observed['public_port']),'target':domain}}]
+                   'data':{'priority':0,'weight':0,'port':port,'target':domain}}]
         for record,payload in zip(records,payloads):
             with self.store.lock:
                 self.current(profile,observed)
@@ -442,16 +520,13 @@ class GatewaySync:
                 if not matches:
                     record=self.cf(token,'PATCH' if record else 'POST',zone+'/dns_records'+('/'+record['id'] if record else ''),json=payload)
                 self.remember_record(profile,key,record,payload)
-        version=public_probe(domain,int(observed['public_port']),observed['public_ip'])
+        version=public_probe(domain,port,observed['public_ip'])
         with self.store.lock:
             self.current(profile,observed)
         return version
 
     def route_rows(self,profile):
-        rows=list(profile['gateway']['routes']);mc=profile['gateway'].get('minecraft',{})
-        if mc.get('enabled'):
-            rows.append(mc)
-        return rows
+        return list(profile['gateway']['routes'])+game_rows(profile['gateway'])
 
     def tick(self):
         for profile in self.store.all():
@@ -477,7 +552,10 @@ class GatewaySync:
                 routes={r['domain']:{'state':state,'message':message or 'VPN-forbindelsen har en fejl.'} for r in self.route_rows(profile)}
             else:
                 try:
-                    urls=self.sync(profile,observed,routes)
+                    if self.route_rows(profile):
+                        urls=self.sync(profile,observed,routes)
+                    else:
+                        self.cleanup(profile)
                 except Exception as exc:
                     error=exc
                 for row in self.route_rows(profile):
@@ -490,10 +568,15 @@ class GatewaySync:
             for domain,value in routes.items():
                 if value['state']=='ready':
                     self.progress[ident]['ready'].add(domain)
-            state='error' if any(v['state']=='error' for v in routes.values()) else 'ready' if routes and all(v['state']=='ready' for v in routes.values()) else 'pending'
+            checks=list(routes.values())
+            checks.extend(observed.get('tcp_status',{}).get(row['id'],{'state':'pending'})
+                          for row in target_rows(forwarding_config(profile['gateway'])))
+            state='error' if any(v['state']=='error' for v in checks) else 'ready' if checks and all(v['state']=='ready' for v in checks) else 'pending'
             message='Alle domæner er verificeret og online.' if state=='ready' else 'Et eller flere domæner har en fejl. Se status ved domænet.' if state=='error' else 'Opsætning og forbindelsestest er i gang. Se status ved domænet.'
             if not profile['gateway'].get('auto_sync',True):
                 message='Automatisk IP og port er slået fra. Cloudflare skal opdateres manuelt.'
+            if not self.route_rows(profile):
+                message='TCP-forbindelserne er aktive.' if state=='ready' else 'Se status ved de enkelte TCP-mål.'
             warnings=self.store.gateway_dns(ident)['warnings']
             if warnings:
                 message+=' Oprydning: '+' '.join(warnings[-5:])

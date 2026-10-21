@@ -82,15 +82,21 @@ authentication because direct targets bypass Cloudflare access controls.
 
 ### Direct TCP forwarding on the same gateway
 
-Gateway settings include an optional **TCP-videresendelse (f.eks. Plex)** section.
-Enter the local IPv4 address and TCP port, such as `192.168.1.96:32400`.
+Gateway settings use one list with **Tilføj mål**. A chooser adds a subdomain,
+TCP forward, or Minecraft Java server with its own settings. Existing entries
+remain; opening and saving the form preserves their endpoints and options.
+The mixed display order is saved. Up to 25 targets of each type are supported.
+
+For a TCP target, enter a name, local IPv4 address and TCP port, such as `192.168.1.96:32400`.
 No domain or extra Cloudflare configuration is required for this target. The
 existing HTTPS gateway still uses its configured domains and Cloudflare key.
 
-The observer reserves and renews a separate Proton NAT-PMP port on the same VPN
+For each TCP target the observer reserves and renews a separate Proton NAT-PMP port on the same VPN
 IP. HTTPS, Minecraft and FjordSeed retain their existing mappings. The gateway
 card shows a separate public TCP endpoint with a copy button. Only TCP is
-forwarded, to one local target; application authentication is required.
+forwarded; application authentication is required. Editing or deleting one TCP
+target does not restart other TCP targets or Caddy's HTTPS/Minecraft listener.
+Allocation failures are reported per target; the provider must grant each port.
 
 The extra port and IP can change. Plex must publish this endpoint to clients;
 this feature does not update Plex settings or route Plex's outbound traffic
@@ -101,7 +107,15 @@ the target application; the gateway's domain certificate is not used here.
 
 ### Minecraft Java on the same gateway
 
-The Gameserver section routes one local Java server through the same VPN IP/port as HTTPS. It may use another Cloudflare zone and saved token with DNS Edit/Zone Read. Automation manages DNS-only A/SRV records and checks the public status response. Bedrock/UDP forwarding is not implemented. TCP profiles can also enable automatic Minecraft SRV-port updates with DNS sync.
+The shared target list supports multiple Minecraft Java servers. Each new
+gameserver receives its own NAT-PMP port, DNS-only A/SRV records and public
+status check. It may use another Cloudflare zone and saved token with DNS
+Edit/Zone Read. Existing gameservers keep their original shared HTTPS/VPN port
+and are displayed in the same list without changing that route. Changing new
+gameservers does not restart the shared HTTPS listener or other port targets.
+Removing one server cleans up only its owned A/SRV records. Bedrock/UDP and
+other game protocols are not implemented. TCP profiles can also enable
+automatic Minecraft SRV-port updates with DNS sync.
 
 The image bundles Caddy 2.11.4, Cloudflare module 0.2.4 and caddy-l4 0.1.2. Systemd deployments must build `fjordvpn-app:local` or select `FJORDVPN_GATEWAY_IMAGE`; older TCP relays retain their relay image. Updating the manager briefly restarts its tunnels, so schedule around active services.
 

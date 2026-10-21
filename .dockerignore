@@ -13,6 +13,7 @@
 !seedbox_export.py
 !relay/
 !relay/observer.py
+!relay/gateway_tcp.py
 !templates/
 !templates/*.html
 !static/

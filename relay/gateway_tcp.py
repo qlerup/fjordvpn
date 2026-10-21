@@ -3,8 +3,25 @@ import socket
 import struct
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 INTERNAL_PORTS = (56800, 56801)  # Separate from FjordSeed's 56789/56790.
+MAX_TARGETS = 25
+RESERVED_PORTS = tuple(range(56800, 56800 + MAX_TARGETS * 4))
+
+
+def target_rows(config):
+    """Read both current lists and the original single-target configuration."""
+    if not config.get('enabled'):
+        return []
+    if 'targets' in config:
+        return config['targets']
+    return [{'id': '0', 'name': 'TCP', 'host': config.get('host'), 'port': config.get('port')}]
+
+
+def port_pair(ident):
+    first = (56850 + int(ident[1:]) * 2) if ident.startswith('g') else (56800 + int(ident) * 2)
+    return (first, first + 1)
 
 
 def request(protocol, private, public=0, lifetime=60):
@@ -25,8 +42,9 @@ def request(protocol, private, public=0, lifetime=60):
 
 
 class Forwarder:
-    def __init__(self, stop):
+    def __init__(self, stop, ports=INTERNAL_PORTS):
         self.stop = stop
+        self.ports = ports
         self.process = None
         self.current = None
         self.private = self.public = 0
@@ -60,11 +78,11 @@ class Forwarder:
         try:
             now = time.monotonic()
             if not self.public or now >= self.next_check or now >= self.expires:
-                self.private = next(p for p in INTERNAL_PORTS if p != gateway_port)
+                self.private = next(p for p in self.ports if p != gateway_port)
                 # Proton uses a paired UDP/TCP allocation. Only TCP is opened locally.
                 udp = request('udp', self.private, self.public)
                 tcp = request('tcp', self.private, self.public or udp)
-                if udp != tcp or tcp in (*INTERNAL_PORTS, gateway_port, 56789, 56790, 8080, 9999):
+                if udp != tcp or tcp in (*RESERVED_PORTS, gateway_port, 56789, 56790, 8080, 9999):
                     raise ValueError('Conflicting NAT-PMP mapping')
                 self.public = tcp
                 self.next_check, self.expires = now + 20, now + 50
@@ -81,3 +99,47 @@ class Forwarder:
             self.close()
             return {'state': 'error', 'public_port': None,
                     'message': 'TCP-porten kunne ikke åbnes eller fornyes. Prøver igen.'}
+
+
+class Forwarders:
+    def __init__(self, stop):
+        self.stop = stop
+        self.workers = {}
+
+    def close(self):
+        workers, self.workers = list(self.workers.values()), {}
+        if workers:
+            with ThreadPoolExecutor(max_workers=len(workers)) as executor:
+                list(executor.map(lambda worker: worker.close(), workers))
+
+    def update(self, config, address, gateway_port, revision, healthy):
+        rows = target_rows(config)
+        keep = {row['id'] for row in rows}
+        removed = [self.workers.pop(ident) for ident in list(self.workers) if ident not in keep]
+        if not rows:
+            if removed:
+                with ThreadPoolExecutor(max_workers=len(removed)) as executor:
+                    list(executor.map(lambda worker: worker.close(), removed))
+            return {}
+        for row in rows:
+            if row['id'] not in self.workers:
+                self.workers[row['id']] = Forwarder(self.stop, port_pair(row['id']))
+        # A slow or failed provider request for one target cannot starve other
+        # renewals or hold up the observer's health report for 25 serial timeouts.
+        def update(row):
+            worker = self.workers[row['id']]
+            return row['id'], worker.update({**row, 'enabled': True}, address, gateway_port, revision, healthy)
+        with ThreadPoolExecutor(max_workers=len(rows)+len(removed)) as executor:
+            cleanup = [executor.submit(worker.close) for worker in removed]
+            result = dict(executor.map(update, rows))
+            for future in cleanup:
+                future.result()
+        used = set()
+        for ident, status in result.items():
+            if status['state'] == 'ready':
+                if status['public_port'] in used:
+                    self.workers[ident].close()
+                    result[ident] = dict(state='error', public_port=None, message='VPN gav en TCP-port, der allerede er i brug.')
+                else:
+                    used.add(status['public_port'])
+        return result

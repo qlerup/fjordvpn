@@ -65,6 +65,13 @@ def test_manifest_assets_are_real():
     assert (root/'Dockerfile').exists()
 
 
+def test_observer_tcp_module_is_in_docker_build_context():
+    root=Path(__file__).resolve().parents[1]
+    assert '!relay/gateway_tcp.py' in (root/'.dockerignore').read_text().splitlines()
+    assert (root/'relay/gateway_tcp.py').is_file()
+    assert 'COPY gateway_tcp.py /app/relay/gateway_tcp.py' in (root/'relay/Dockerfile').read_text()
+
+
 def test_mismatched_host_path_cannot_start_container(tmp_path,monkeypatch):
     monkeypatch.setenv('FJORDVPN_CONTAINER','1');monkeypatch.setenv('HOSTNAME','manager')
     monkeypatch.setenv('HOST_DATA_DIR','/wrong')

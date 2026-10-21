@@ -4,6 +4,7 @@ let profiles = [], editing = null, toastTimer;
 const states = {online:'Online',off:'Slukket',connecting:'Forbinder',stopping:'Slukker',error:'Fejl',unknown:'Ukendt'};
 function el(tag, cls, text) { const node=document.createElement(tag); if(cls) node.className=cls; if(text!==undefined) node.textContent=text; return node; }
 function toast(message) { $('#toast').textContent=message; $('#toast').hidden=false; clearTimeout(toastTimer); toastTimer=setTimeout(()=>$('#toast').hidden=true,4000); }
+function gatewayTCPRows(config){return config?.enabled?(config.targets||[{id:'0',name:'TCP',host:config.host,port:config.port}]):[];}
 async function api(path,options={}) { const response=await fetch(path,{...options,headers:{'X-CSRF-Token':csrf,...options.headers}}); if(response.status===401){location.href='/login';throw Error('Log ind igen.');} const data=await response.json(); if(!response.ok)throw Error(data.error||'Handlingen kunne ikke gennemføres.'); return data; }
 function card(p,legacy=false){
  const gateway=p.gateway?.enabled;
@@ -16,8 +17,9 @@ function card(p,legacy=false){
  const targetRow=el('div','target-row'),target=el('div');target.append(el('p','label','Lokalt mål'),el('p','target',p.host&&p.port?`${p.host}:${p.port}`:'Intet mål valgt'));targetRow.append(target,el('span','small muted',p.relay_active?'TCP aktiv':legacy?'Eksisterende opsætning':p.relay_enabled?'TCP afventer':'TCP slået fra'));main.append(targetRow);
  if(p.stream_sync?.enabled) main.append(el('p','small '+(p.stream_status?.ok?'':'muted'),p.stream_status?.message||'Automatisk DNS og streamport afventer kontrol.'));
  if(gateway){
-  const mc=p.gateway.minecraft,routeRows=[...p.gateway.routes,...(mc?.enabled?[{...mc,minecraft:true}]:[])];
-  target.querySelector('.target').textContent=routeRows.length+(routeRows.length===1?' subdomæne':' subdomæner');targetRow.lastChild.textContent=p.relay_active?(mc?.enabled?'HTTPS + gameserver aktiv':'HTTPS aktiv'):'Gateway afventer';
+  const mc=p.gateway.minecraft,routeRows=[...p.gateway.routes,...(mc?.enabled?[{...mc,minecraft:true}]:[]),...(p.gateway.gameservers||[]).map(row=>({...row,minecraft:true}))];
+  const count=routeRows.length+gatewayTCPRows(p.gateway.tcp).length;
+  target.querySelector('.target').textContent=count+' mål';targetRow.lastChild.textContent=p.relay_active?(routeRows.some(r=>r.minecraft)?'HTTPS + gameserver aktiv':'Gateway aktiv'):'Gateway afventer';
   const runtimeError=p.state==='error',available=p.desired&&p.state==='online'&&p.relay_active;
   const checks=available?(p.gateway_status?.routes||{}):{};
   for(const route of routeRows){
@@ -27,6 +29,7 @@ function card(p,legacy=false){
    const dot=el('span','route-status-dot is-'+state);dot.setAttribute('role','img');dot.setAttribute('aria-label',label+': '+check.message);dot.title=label+': '+check.message;dot.tabIndex=0;
    name.append(dot,el('span','',route.domain+(route.minecraft?' · Minecraft Java':route.direct?' · DNS only':route.fjordflix?' · Direkte stream'+(p.public_port?' :'+p.public_port:''):'')));
    const item=el('div','gateway-card-route');item.append(name,el('span','small muted',`${route.minecraft?'tcp':route.protocol}://${route.host}:${route.port}`));
+   if(route.minecraft&&route.id&&p.tcp_status?.['g'+route.id]?.state==='ready')item.append(el('span','small muted',`${p.public_ip}:${p.tcp_status['g'+route.id].public_port}`));
    if(route.direct&&available&&p.public_port)item.append(el('span','small muted',`https://${route.domain}:${p.public_port}`));
    if(state!=='ready')item.append(el('span','gateway-route-check small '+(state==='error'?'route-error':'muted'),(p.desired?label+': ':'')+check.message));
    main.append(item);
@@ -35,15 +38,17 @@ function card(p,legacy=false){
   main.append(el('p','small muted',p.gateway_status?.message||'DNS og HTTPS-port afventer kontrol.'));
  }
  if(gateway&&p.gateway.tcp?.enabled){
-  const check=p.tcp_status||{state:'pending',message:'Afventer VPN og TCP-port.'};
+  for(const target of gatewayTCPRows(p.gateway.tcp)){
+  const check=p.tcp_status?.[target.id]||(target.id==='0'&&p.tcp_status?.state?p.tcp_status:null)||{state:'pending',message:'Afventer VPN og TCP-port.'};
   const state=check.state||'pending',item=el('div','gateway-card-route'),name=el('span','gateway-route-name');
   const dot=el('span','route-status-dot is-'+state);dot.setAttribute('role','img');dot.setAttribute('aria-label',check.message);dot.title=check.message;
-  name.append(dot,el('span','','TCP-videresendelse'));item.append(name,el('span','small muted',`${p.gateway.tcp.host}:${p.gateway.tcp.port}`));
+  name.append(dot,el('span','',target.name+' · TCP'));item.append(name,el('span','small muted',`${target.host}:${target.port}`));
   if(state==='ready'&&p.state==='online'&&p.public_ip&&check.public_port){
-   const endpoint=`${p.public_ip}:${check.public_port}`,copy=el('button','copy-button','Kopiér TCP-adresse');copy.type='button';copy.onclick=()=>copyText(endpoint);
+   const endpoint=`${p.public_ip}:${check.public_port}`,copy=el('button','copy-button','Kopiér TCP-adresse');copy.type='button';copy.setAttribute('aria-label','Kopiér TCP-adresse for '+target.name);copy.onclick=()=>copyText(endpoint);
    item.append(el('span','small',endpoint),copy);
   }
   item.append(el('span','gateway-route-check small '+(state==='error'?'route-error':'muted'),check.message));main.append(item);
+  }
  }
  if(gateway&&p.seedbox_status){
   const check=p.seedbox_status,state=['ready','pending','error','off'].includes(check.state)?check.state:'pending';

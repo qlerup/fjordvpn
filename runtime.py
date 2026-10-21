@@ -120,14 +120,24 @@ class Runtime:
 
     def tcp_firewall(self, vpn, profile, folder):
         """Manage only our tagged TCP rules on the VPN interface."""
-        from relay.gateway_tcp import INTERNAL_PORTS
-        enabled = profile['gateway'].get('tcp', {}).get('enabled', False)
+        from relay.gateway_tcp import INTERNAL_PORTS, RESERVED_PORTS, port_pair, target_rows
+        from store import atomic
+        from gateway import forwarding_config
+        targets = target_rows(forwarding_config(profile['gateway']))
+        wanted = {port for row in targets for port in port_pair(row['id'])}
         ledger = folder / 'observed' / 'tcp-firewall'
-        if not enabled and not ledger.exists():
+        current = set()
+        if ledger.exists():
+            raw = ledger.read_text().strip()
+            current = set(json.loads(raw)) if raw else set(INTERNAL_PORTS)
+            if not current <= set(RESERVED_PORTS):
+                raise ValueError('TCP-portenes firewallregistrering er ugyldig.')
+        if not wanted and not current:
             return
         # Record ownership before writes, including a partially failed update.
-        ledger.touch(mode=0o600, exist_ok=True)
-        for port in INTERNAL_PORTS:
+        atomic(ledger, json.dumps(sorted(current | wanted)))
+        for port in sorted(current | wanted):
+            enabled = port in wanted
             args = ['-i', 'tun0', '-p', 'tcp', '--dport', str(port), '-m', 'comment',
                     '--comment', 'fjordvpn-tcp-' + profile['id'], '-j', 'ACCEPT']
             checked = vpn.exec_run(['iptables', '-C', 'INPUT', *args])
@@ -137,7 +147,9 @@ class Runtime:
                 result = vpn.exec_run(['iptables', '-I' if enabled else '-D', 'INPUT', *args])
                 if result.exit_code:
                     raise ValueError('TCP-portens VPN-firewall kunne ikke opdateres.')
-        if not enabled:
+        if wanted:
+            atomic(ledger, json.dumps(sorted(wanted)))
+        else:
             ledger.unlink(missing_ok=True)
 
     def status(self, p):
@@ -168,17 +180,26 @@ class Runtime:
         if self.errors.get(p['id']):
             result.update(state='error', message=self.errors[p['id']])
         if p.get('gateway', {}).get('enabled'):
-            if p['gateway'].get('tcp', {}).get('enabled'):
-                result['tcp_status'] = dict(state='pending' if p['desired'] else 'off', public_port=None,
-                    message='Afventer VPN og TCP-port.' if p['desired'] else 'Gatewayen er slukket.')
-                if (result['state'] == 'online' and obs.get('revision') == p['revision']
-                        and 0 <= time.time() - obs['checked_at'] < 20):
-                    tcp = obs.get('tcp_status', {})
+            from gateway import forwarding_config
+            forward = forwarding_config(p['gateway'])
+            if forward['enabled']:
+                from relay.gateway_tcp import target_rows
+                result['tcp_status'] = {}
+                fresh = (result['state'] == 'online' and obs.get('revision') == p['revision']
+                         and 0 <= time.time() - obs['checked_at'] < 20)
+                statuses = obs.get('tcp_status', {}) if fresh else {}
+                if 'state' in statuses:  # Original observer format during upgrades.
+                    statuses = {'0': statuses}
+                for row in target_rows(forward):
+                    status = dict(state='pending' if p['desired'] else 'off', public_port=None,
+                        message='Afventer VPN og TCP-port.' if p['desired'] else 'Gatewayen er slukket.')
+                    tcp = statuses.get(row['id'], {})
                     port = tcp.get('public_port')
                     if tcp.get('state') == 'ready' and type(port) is int and 1 <= port <= 65535:
-                        result['tcp_status'] = dict(state='ready', public_port=port, message='TCP-videresendelse aktiv.')
+                        status = dict(state='ready', public_port=port, message='TCP-videresendelse aktiv.')
                     elif tcp.get('state') == 'error':
-                        result['tcp_status'].update(state='error', message='TCP-porten kunne ikke åbnes eller fornyes.')
+                        status.update(state='error', message='TCP-porten kunne ikke åbnes eller fornyes.')
+                    result['tcp_status'][row['id']] = status
             result['seedbox_status'] = self.seedbox_status(p, result)
         return result
 

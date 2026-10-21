@@ -128,8 +128,8 @@ class LocationPage(HTMLParser):
 
 
 def observe():
-    from relay.gateway_tcp import Forwarder
-    tcp = Forwarder(stop)
+    from relay.gateway_tcp import Forwarders
+    tcp = Forwarders(stop)
     process, current = None, None
     location = PublicLocation()
     networks = [ipaddress.IPv4Network(n) for n in os.environ['LAN_SUBNETS'].split(',')]
@@ -156,11 +156,12 @@ def observe():
                         state['message'] = 'VPN og offentlig port er klar'
                         if settings['enabled']:
                             if settings.get('mode')=='gateway':
-                                from gateway import settings as validate_gateway, process_key
+                                from gateway import settings as validate_gateway, process_key, forwarding_config
                                 validated=validate_gateway({'enabled':True,'key_id':'0'*32,'routes':settings['routes'],
                                     'minecraft':settings.get('minecraft',{'enabled':False}),
-                                    'tcp':settings.get('tcp',{'enabled':False})},networks)
-                                direct = validated['tcp']
+                                    'tcp':settings.get('tcp',{'enabled':False}),
+                                    'gameservers':settings.get('gameservers',[])},networks)
+                                direct = forwarding_config(validated)
                                 token=Path('/config/gateway-token').read_bytes()
                                 wanted=process_key(validated,port,token)
                             else:
