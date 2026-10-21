@@ -134,7 +134,13 @@ def settings(value, networks):
             ids.add(ident)
             target=validate_target({'name':row.get('name','TCP'),'host':row.get('host'),'port':row.get('port'),
                                     'relay_enabled':True},networks)
-            targets.append({'id':ident,'name':target['name'],'host':target['host'],'port':target['port']})
+            entry={'id':ident,'name':target['name'],'host':target['host'],'port':target['port']}
+            plex=row.get('plex_sync',False)
+            if type(plex) is not bool:
+                raise ValueError('Vælg om Plex-adressen skal opdateres automatisk.')
+            if plex:
+                entry['plex_sync']=True
+            targets.append(entry)
         direct={'enabled':True,'targets':targets}
     if not result and not mc.get('enabled') and not game_targets and not direct['enabled']:
         raise ValueError('Tilføj mindst ét mål til gatewayen.')

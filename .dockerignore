@@ -9,6 +9,7 @@
 !store.py
 !stream_sync.py
 !gateway.py
+!plex_sync.py
 !minecraft_gateway.py
 !seedbox_export.py
 !relay/

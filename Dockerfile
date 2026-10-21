@@ -11,7 +11,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py event_notifier.py hub_email.py configuration.py hub.py runtime.py store.py stream_sync.py gateway.py minecraft_gateway.py ./
-COPY seedbox_export.py ./
+COPY seedbox_export.py plex_sync.py ./
 COPY relay ./relay
 COPY templates ./templates
 COPY static ./static

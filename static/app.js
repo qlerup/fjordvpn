@@ -48,6 +48,11 @@ function card(p,legacy=false){
    item.append(el('span','small',endpoint),copy);
   }
   item.append(el('span','gateway-route-check small '+(state==='error'?'route-error':'muted'),check.message));main.append(item);
+  if(target.plex_sync){
+   const plex=p.plex_status?.[target.id]||{state:'pending',message:'Afventer kontrol af Plex-adressen.'};
+   item.append(el('span','gateway-route-check small '+(plex.state==='error'?'route-error':'muted'),plex.message));
+   if(plex.state==='ready'&&plex.url){const link=el('a','small','Åbn Plex');link.href=plex.url+'/web';link.target='_blank';link.rel='noopener';item.append(link);}
+  }
   }
  }
  if(gateway&&p.seedbox_status){

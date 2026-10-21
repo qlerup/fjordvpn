@@ -16,6 +16,7 @@ from event_notifier import EventNotifier
 from store import Store, atomic
 from stream_sync import StreamSync
 from gateway import GatewaySync
+from plex_sync import PlexSync
 
 
 def create_app(root=None, testing=False, runtime_factory=Runtime):
@@ -179,6 +180,7 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
                 observed=runtime.status(p)
                 return dict(observed, stream_status=stream_sync.statuses.get(p['id'], {}),
                     gateway_status=gateway_sync.status(p,observed),
+                    plex_status=plex_sync.status(p,observed),
                     cloudflare_token_saved=(store.directory(p['id'])/'cloudflare-token').exists())
             return jsonify(profiles=[listed(p) for p in store.all()])
 
@@ -244,6 +246,8 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
     app.extensions['event_notifier']=notifier
     stream_sync = StreamSync(store, runtime)
     gateway_sync = GatewaySync(store,runtime)
+    plex_sync = PlexSync(store,runtime)
+    app.extensions['plex_sync']=plex_sync
     app.extensions['gateway_sync']=gateway_sync
     app.extensions['stop_event']=stop_event
     @app.post('/api/profiles/<ident>/delete')
@@ -302,6 +306,14 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
                     app.logger.error('Gateway-kontrol afventer; prøver igen.')
                 stop_event.wait(5)
         threading.Thread(target=gateway_worker,daemon=True).start()
+        def plex_worker():
+            while not stop_event.is_set():
+                try:
+                    plex_sync.tick()
+                except Exception:
+                    app.logger.error('Plex-synkronisering afventer; prøver igen.')
+                stop_event.wait(5)
+        threading.Thread(target=plex_worker,daemon=True).start()
     return app
 
 

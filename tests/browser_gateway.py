@@ -73,6 +73,8 @@ with tempfile.TemporaryDirectory() as folder:
             tcp.first.locator('[data-tcp-field=name]').fill('Plex')
             tcp.first.locator('[data-tcp-field=host]').fill('192.168.1.96')
             expect(tcp.first.locator('[data-tcp-field=port]')).to_have_value('32400')
+            tcp.first.locator('[data-tcp-field=plex_sync]').check()
+            tcp.first.locator('[data-tcp-field=plex_token]').fill('synthetic-plex-token-123456789')
             add('game');games=page.locator('.gateway-game-route')
             games.first.locator('[data-game-field=domain]').fill('mc.nordprison.dk')
             games.first.locator('[data-game-field=host]').fill('192.168.1.152')
@@ -105,14 +107,19 @@ with tempfile.TemporaryDirectory() as folder:
             assert saved['target_order']==['web:app.example.com','tcp:0','game:0','web:other.example.com','tcp:1','game:1']
             assert saved['minecraft']=={'enabled':False}
             assert saved['routes'][1]['tls_server_name']=='backend.example.com'
+            assert saved['tcp']['targets'][0]['plex_sync'] is True
+            assert 'synthetic-plex-token' not in str(profile)
             card=page.locator('.vpn-card').filter(has_text='Mine webapps')
             expect(card).to_contain_text('6 mål')
             card.get_by_role('button',name='Indstillinger',exact=True).click()
             expect(page.locator('#gateway-upload')).not_to_be_visible()
             expect(page.locator('#gateway-auto-sync')).not_to_be_checked()
+            expect(tcp.first.locator('[data-tcp-field=plex_sync]')).to_be_checked()
+            expect(tcp.first.locator('[data-tcp-field=plex_token]')).to_have_value('')
             assert page.locator('#gateway-routes .gateway-route').evaluate_all("rows=>rows.map(row=>row.dataset.targetType)")==['web','tcp','game','web','tcp','game']
             save()
             assert store.get(profile['id'])['gateway']==saved
+            assert store.plex_token_path(profile['id'],'0').read_text()=='synthetic-plex-token-123456789'
             # Removing one target of each extra-port type preserves all siblings.
             card.get_by_role('button',name='Indstillinger',exact=True).click()
             tcp.first.get_by_role('button',name='Fjern TCP-mål').click()
@@ -121,6 +128,7 @@ with tempfile.TemporaryDirectory() as folder:
             assert remaining['routes']==saved['routes']
             assert remaining['tcp']['targets']==saved['tcp']['targets'][1:]
             assert remaining['gameservers']==saved['gameservers'][1:]
+            assert not store.plex_token_path(profile['id'],'0').exists()
             assert store.get(legacy['id'])['gateway']==initial
             assert (store.directory(old['id'])/'profile.json').read_bytes()==before
             # Independent copy controls, readiness and responsive card rendering.

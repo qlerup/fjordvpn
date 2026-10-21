@@ -98,12 +98,26 @@ forwarded; application authentication is required. Editing or deleting one TCP
 target does not restart other TCP targets or Caddy's HTTPS/Minecraft listener.
 Allocation failures are reported per target; the provider must grant each port.
 
-The extra port and IP can change. Plex must publish this endpoint to clients;
-this feature does not update Plex settings or route Plex's outbound traffic
-through the VPN. Merely entering the port under Remote Access does not correct
-an incorrectly detected public IP. Use a suitable advertised endpoint or route
-Plex's discovery traffic through the VPN separately. Direct TLS is handled by
-the target application; the gateway's domain certificate is not used here.
+The extra port and IP can change. For Plex, enable **Opdater automatisk
+Plex-adressen** on the TCP target and enter its existing Plex token. The manager
+stores that credential privately outside the relay mount; responses and form
+edits never return it. A blank token preserves the saved value. Changing the
+local target requires the token again. One gateway target may control each
+local Plex endpoint.
+
+Every 30 seconds, independently of Cloudflare synchronization, the manager
+checks the local Plex identity and verifies its public HTTPS `plex.direct`
+endpoint, including the certificate and matching server identity. Only then
+does it update **Custom server access URLs** using Plex's local preferences
+API. Other advertised URLs remain, and only the previously managed URL is
+replaced on IP/port changes. Ownership survives manager restarts. TLS or network
+failures leave the advertised URL untouched and show an error on the card.
+Disabling this option stops synchronization without changing Plex preferences.
+
+Plex's own certificate provides HTTPS. This does not route the server's outbound
+traffic through the VPN or manage its certificates. If automatic synchronization
+is off, publish the public endpoint manually. A manually specified Remote Access
+port alone does not correct an incorrectly detected public IP.
 
 ### Minecraft Java on the same gateway
 

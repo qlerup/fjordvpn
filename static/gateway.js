@@ -8,7 +8,12 @@ function gatewayTCPRoute(row={}){
  const [name,n]=field('Navn','name',row.name);n.maxLength=64;n.placeholder='Fx Plex';
  const [host,h]=field('Lokal IP','host',row.host);h.placeholder='192.168.1.96';h.inputMode='decimal';
  const [port,p]=field('Lokal port','port',row.port??32400,'number');p.min=1;p.max=65535;
- const fields=el('div','field-row');fields.append(host,port);card.append(name,fields);return card;
+ const fields=el('div','field-row');fields.append(host,port);card.append(name,fields);
+ const syncLabel=el('label','check'),sync=el('input');sync.type='checkbox';sync.dataset.tcpField='plex_sync';sync.checked=!!row.plex_sync;
+ syncLabel.append(sync,document.createTextNode('Opdater automatisk Plex-adressen'));
+ const options=el('div'),tokenLabel=el('label','','Plex-token'),token=el('input');token.type='password';token.autocomplete='new-password';token.dataset.tcpField='plex_token';token.maxLength=256;token.placeholder='Tomt felt beholder gemt token';tokenLabel.append(token);
+ options.append(tokenLabel,el('p','small muted','Gatewayen kontrollerer Plex via den lokale IP og opdaterer serveradressen ved skift af VPN-IP eller TCP-port. HTTPS verificeres først. Tokenet gemmes privat og vises aldrig igen. Andre serveradresser i Plex bevares.'));
+ function showPlex(){options.hidden=!sync.checked;token.disabled=!sync.checked;}sync.onchange=showPlex;showPlex();card.append(syncLabel,options);return card;
 }
 function nextTargetId(kind){
  const used=new Set([...$('#gateway-routes').querySelectorAll(`[data-target-type=${kind}]`)].map(row=>kind==='tcp'?row.dataset.tcpId:row.dataset.gameId));
@@ -91,7 +96,7 @@ $('#gateway-form').onsubmit=async event=>{
   values.port=Number(values.port);return values;
  });
  const targets=[...document.querySelectorAll('#gateway-routes .gateway-tcp-route')].map(row=>{
-  const value={id:row.dataset.tcpId};for(const field of row.querySelectorAll('[data-tcp-field]'))value[field.dataset.tcpField]=field.value;
+  const value={id:row.dataset.tcpId};for(const field of row.querySelectorAll('[data-tcp-field]'))value[field.dataset.tcpField]=field.type==='checkbox'?field.checked:field.value;
   value.port=Number(value.port);return value;
  });
  const games=[...document.querySelectorAll('#gateway-routes .gateway-game-route')].map(row=>{
