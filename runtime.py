@@ -91,6 +91,8 @@ class Runtime:
             vpn.update(restart_policy=self.restart_policy)
             vpn.start()
         vpn.reload()
+        if p.get('gateway', {}).get('enabled'):
+            self.tcp_firewall(vpn, p, folder)
         if observer:
             observer.reload()
             # Gluetun can be restarted by Docker, invalidating the observer namespace.
@@ -115,6 +117,28 @@ class Runtime:
                 log_config=docker.types.LogConfig(type='json-file', config={'max-size':'2m','max-file':'2'}),**extra)
         if observer.status != 'running':
             observer.start()
+
+    def tcp_firewall(self, vpn, profile, folder):
+        """Manage only our tagged TCP rules on the VPN interface."""
+        from relay.gateway_tcp import INTERNAL_PORTS
+        enabled = profile['gateway'].get('tcp', {}).get('enabled', False)
+        ledger = folder / 'observed' / 'tcp-firewall'
+        if not enabled and not ledger.exists():
+            return
+        # Record ownership before writes, including a partially failed update.
+        ledger.touch(mode=0o600, exist_ok=True)
+        for port in INTERNAL_PORTS:
+            args = ['-i', 'tun0', '-p', 'tcp', '--dport', str(port), '-m', 'comment',
+                    '--comment', 'fjordvpn-tcp-' + profile['id'], '-j', 'ACCEPT']
+            checked = vpn.exec_run(['iptables', '-C', 'INPUT', *args])
+            if checked.exit_code not in (0, 1):
+                raise ValueError('TCP-portens VPN-firewall kunne ikke kontrolleres.')
+            if (enabled and checked.exit_code == 1) or (not enabled and checked.exit_code == 0):
+                result = vpn.exec_run(['iptables', '-I' if enabled else '-D', 'INPUT', *args])
+                if result.exit_code:
+                    raise ValueError('TCP-portens VPN-firewall kunne ikke opdateres.')
+        if not enabled:
+            ledger.unlink(missing_ok=True)
 
     def status(self, p):
         result = {k:v for k,v in p.items() if k != 'fingerprint'}
@@ -144,6 +168,17 @@ class Runtime:
         if self.errors.get(p['id']):
             result.update(state='error', message=self.errors[p['id']])
         if p.get('gateway', {}).get('enabled'):
+            if p['gateway'].get('tcp', {}).get('enabled'):
+                result['tcp_status'] = dict(state='pending' if p['desired'] else 'off', public_port=None,
+                    message='Afventer VPN og TCP-port.' if p['desired'] else 'Gatewayen er slukket.')
+                if (result['state'] == 'online' and obs.get('revision') == p['revision']
+                        and 0 <= time.time() - obs['checked_at'] < 20):
+                    tcp = obs.get('tcp_status', {})
+                    port = tcp.get('public_port')
+                    if tcp.get('state') == 'ready' and type(port) is int and 1 <= port <= 65535:
+                        result['tcp_status'] = dict(state='ready', public_port=port, message='TCP-videresendelse aktiv.')
+                    elif tcp.get('state') == 'error':
+                        result['tcp_status'].update(state='error', message='TCP-porten kunne ikke åbnes eller fornyes.')
             result['seedbox_status'] = self.seedbox_status(p, result)
         return result
 

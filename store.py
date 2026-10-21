@@ -112,7 +112,8 @@ class Store:
             'enabled': profile['relay_enabled'], 'revision': profile['revision']}
         gateway=profile.get('gateway',{})
         if gateway.get('enabled'):
-            relay.update(enabled=True,mode='gateway',routes=gateway['routes'],minecraft=gateway.get('minecraft',{'enabled':False}))
+            relay.update(enabled=True,mode='gateway',routes=gateway['routes'],minecraft=gateway.get('minecraft',{'enabled':False}),
+                         tcp=gateway.get('tcp',{'enabled':False}))
             atomic(folder/'relay/gateway-token',self.key(gateway['key_id'])['token'])
         atomic(folder / 'relay' / 'settings.json', json.dumps(relay))
 

@@ -25,13 +25,25 @@ function card(p,legacy=false){
    const state=['ready','pending','error'].includes(check.state)?check.state:'pending';
    const label={ready:'Online',pending:'Opsætter',error:'Fejl'}[state],name=el('span','gateway-route-name');
    const dot=el('span','route-status-dot is-'+state);dot.setAttribute('role','img');dot.setAttribute('aria-label',label+': '+check.message);dot.title=label+': '+check.message;dot.tabIndex=0;
-   name.append(dot,el('span','',route.domain+(route.minecraft?' · Minecraft Java':route.fjordflix?' · Direkte stream'+(p.public_port?' :'+p.public_port:''):'')));
+   name.append(dot,el('span','',route.domain+(route.minecraft?' · Minecraft Java':route.direct?' · DNS only':route.fjordflix?' · Direkte stream'+(p.public_port?' :'+p.public_port:''):'')));
    const item=el('div','gateway-card-route');item.append(name,el('span','small muted',`${route.minecraft?'tcp':route.protocol}://${route.host}:${route.port}`));
+   if(route.direct&&available&&p.public_port)item.append(el('span','small muted',`https://${route.domain}:${p.public_port}`));
    if(state!=='ready')item.append(el('span','gateway-route-check small '+(state==='error'?'route-error':'muted'),(p.desired?label+': ':'')+check.message));
    main.append(item);
   }
   if(available){const state=p.gateway_status?.state||'pending',badge=top.querySelector('.badge');badge.className='badge '+({ready:'online',error:'error',pending:'connecting'}[state]||'connecting');badge.textContent={ready:'Online',error:'Fejl',pending:'Opsætter'}[state]||'Opsætter';}
   main.append(el('p','small muted',p.gateway_status?.message||'DNS og HTTPS-port afventer kontrol.'));
+ }
+ if(gateway&&p.gateway.tcp?.enabled){
+  const check=p.tcp_status||{state:'pending',message:'Afventer VPN og TCP-port.'};
+  const state=check.state||'pending',item=el('div','gateway-card-route'),name=el('span','gateway-route-name');
+  const dot=el('span','route-status-dot is-'+state);dot.setAttribute('role','img');dot.setAttribute('aria-label',check.message);dot.title=check.message;
+  name.append(dot,el('span','','TCP-videresendelse'));item.append(name,el('span','small muted',`${p.gateway.tcp.host}:${p.gateway.tcp.port}`));
+  if(state==='ready'&&p.state==='online'&&p.public_ip&&check.public_port){
+   const endpoint=`${p.public_ip}:${check.public_port}`,copy=el('button','copy-button','Kopiér TCP-adresse');copy.type='button';copy.onclick=()=>copyText(endpoint);
+   item.append(el('span','small',endpoint),copy);
+  }
+  item.append(el('span','gateway-route-check small '+(state==='error'?'route-error':'muted'),check.message));main.append(item);
  }
  if(gateway&&p.seedbox_status){
   const check=p.seedbox_status,state=['ready','pending','error','off'].includes(check.state)?check.state:'pending';

@@ -35,6 +35,65 @@ def test_gateway_requires_key_and_unique_routes():
         with pytest.raises(ValueError):settings(data,NETWORKS)
 
 
+def test_direct_access_is_opt_in_validated_and_persisted(tmp_path):
+    data=gateway()
+    assert all(not r['direct'] for r in settings(data,NETWORKS)['routes'])
+    for value in ('yes',1,None):
+        data['routes'][0]['direct']=value
+        with pytest.raises(ValueError):settings(data,NETWORKS)
+    data['routes'][0].update(direct=True,fjordflix=True)
+    with pytest.raises(ValueError):settings(data,NETWORKS)
+    store,key=store_with_key(tmp_path)
+    data=gateway(key);data['routes'][0]['direct']=True
+    saved=store.create({'name':'Direct','gateway':data},config())
+    assert store.get(saved['id'])['gateway']['routes'][0]['direct'] is True
+    edited=store.edit(saved['id'],{'name':'Edited','gateway':saved['gateway']})
+    assert edited['gateway']['routes'][0]['direct'] is True
+
+
+def test_direct_access_forwards_all_paths_but_keeps_other_hosts_protected():
+    data=gateway();data['routes'][0]['direct']=True
+    routes=caddy_config(settings(data,NETWORKS)['routes'],40000)['apps']['http']['servers']['gateway']['routes']
+    assert routes[0]['match']==[{'host':['app.example.com']}]
+    assert routes[0]['handle']==[{'handler':'reverse_proxy','upstreams':[{'dial':'192.168.1.110:8099'}]}]
+    assert routes[1]['handle'][0]['routes'][0]['handle'][0]['status_code']==403
+    assert routes[-1]['handle'][0]['status_code']==404
+
+
+def test_direct_dns_excluded_from_origin_rule_and_follows_port_changes(tmp_path):
+    sync,p,observed,store=fixture_sync(tmp_path,ruleset={'id':'ruleset','rules':[]})
+    p['gateway']['routes'][0]['direct']=True;store.save(p)
+    assert sync.sync(p,observed)==['https://app.example.com:38850','https://other.example.com']
+    writes=[c.kwargs['json'] for c in sync.cf.call_args_list if c.args[1] in ('POST','PATCH')]
+    rule=next(w for w in writes if 'expression' in w)
+    assert 'app.example.com' not in rule['expression'] and 'other.example.com' in rule['expression']
+    dns=[w for w in writes if w.get('type')=='A']
+    assert [(w['proxied'],w['ttl']) for w in dns]==[(False,60),(True,1)]
+    sync.stream.flix=Mock(side_effect=AssertionError('Direct access must not configure FjordFlix'))
+    observed['public_port']=40000
+    assert sync.sync(p,observed)[0]=='https://app.example.com:40000'
+    with patch('gateway.requests.Session') as session:
+        session.return_value.__enter__.return_value.get.return_value.status_code=200
+        status=GatewaySync.probe_web(sync,p,observed,p['gateway']['routes'][0])
+        assert status['url']=='https://app.example.com:40000'
+        session.return_value.__enter__.return_value.get.assert_called_once_with(
+            status['url'],timeout=8,allow_redirects=False,stream=True)
+
+
+def test_switching_last_proxied_host_to_direct_removes_owned_origin_rule(tmp_path):
+    sync,p,observed,store=fixture_sync(tmp_path)
+    ruleset={'id':'ruleset','rules':[{'id':'owned','ref':'fjordvpn_gateway_'+p['id']},
+                                   {'id':'unrelated','ref':'someone_else'}]}
+    original=sync.cf.side_effect
+    sync.cf.side_effect=lambda token,method,path,**kw: ruleset if method=='GET' and path.endswith('/entrypoint') else original(token,method,path,**kw)
+    for row in p['gateway']['routes']:row['direct']=True
+    store.save(p)
+    assert all(':38850' in url for url in sync.sync(p,observed))
+    deleted=[c.args[2] for c in sync.cf.call_args_list if c.args[1]=='DELETE']
+    assert deleted and all(path.endswith('/rules/owned') for path in deleted)
+    assert not any('action' in c.kwargs.get('json',{}) for c in sync.cf.call_args_list)
+
+
 def test_gateway_caddy_routing_tls_and_unknown_host():
     routes=settings(gateway(),NETWORKS)['routes'];value=caddy_config(routes,38850)
     assert value['admin']['disabled']

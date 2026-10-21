@@ -1,6 +1,7 @@
 """Opt-in HTTPS gateways. Legacy TCP relays and torrent profiles are unchanged."""
 import ipaddress
 import json
+import hashlib
 import re
 import time
 
@@ -57,11 +58,16 @@ def settings(value, networks):
         flix=row.get('fjordflix',False)
         if type(flix) is not bool:
             raise ValueError('Vælg om domænet bruges til FjordFlix-streaming.')
+        direct=row.get('direct',False)
+        if type(direct) is not bool:
+            raise ValueError('Vælg om domænet skal bruge direkte adgang.')
+        if direct and flix:
+            raise ValueError('Vælg enten direkte adgang eller FjordFlix-streaming.')
         if domain in seen:
             raise ValueError('Hvert subdomæne må kun have ét lokalt mål.')
         seen.add(domain)
         result.append({'domain':domain,'host':target['host'],'port':target['port'],
-                       'protocol':protocol,'tls_server_name':server_name,'fjordflix':flix})
+                       'protocol':protocol,'tls_server_name':server_name,'fjordflix':flix,'direct':direct})
     if sum(r['fjordflix'] for r in result)>1:
         raise ValueError('Kun ét domæne kan styre FjordFlix-streamadressen.')
     minecraft=value.get('minecraft',{'enabled':False})
@@ -77,7 +83,22 @@ def settings(value, networks):
         if not isinstance(mc_key,str) or not re.fullmatch('[a-f0-9]{32}',mc_key):
             raise ValueError('Vælg en Cloudflare-nøgle til Minecraft-domænet.')
         mc={'enabled':True,'domain':domain,'host':target['host'],'port':target['port'],'key_id':mc_key}
-    return {'enabled':True,'key_id':key,'routes':result,'auto_sync':auto,'minecraft':mc}
+    tcp=value.get('tcp',{'enabled':False})
+    if not isinstance(tcp,dict) or type(tcp.get('enabled')) is not bool:
+        raise ValueError('Vælg om TCP-videresendelse skal aktiveres.')
+    direct={'enabled':False}
+    if tcp['enabled']:
+        target=validate_target({'name':'TCP','host':tcp.get('host'),'port':tcp.get('port'),
+                                'relay_enabled':True},networks)
+        direct={'enabled':True,'host':target['host'],'port':target['port']}
+    return {'enabled':True,'key_id':key,'routes':result,'auto_sync':auto,'minecraft':mc,'tcp':direct}
+
+
+def process_key(config, port, token):
+    """Only web/Minecraft changes should restart their shared Caddy process."""
+    return ('gateway', port, json.dumps(config['routes'], sort_keys=True),
+            hashlib.sha256(token).hexdigest(),
+            json.dumps(config.get('minecraft', {'enabled': False}), sort_keys=True))
 
 
 def caddy_config(routes,port,token_file='/config/gateway-token',storage='/observed/caddy-data',cloudflare_ranges=None,minecraft=None):
@@ -91,7 +112,7 @@ def caddy_config(routes,port,token_file='/config/gateway-token',storage='/observ
         handle=[proxy]
         if row.get('fjordflix'):
             match['path']=['/media/*']
-        else:
+        elif not row.get('direct'):
             # Authorize the actual socket peer, never a spoofable forwarding header.
             # The port is shared with direct media, so a global IP firewall would
             # also break legitimate viewers. Gate only the web hostname here.
@@ -161,7 +182,7 @@ class GatewaySync:
         return {'state':'error','message':str(exc) if isinstance(exc,ValueError) and not isinstance(exc,json.JSONDecodeError) else 'Forbindelsen kunne ikke kontrolleres.'}
 
     def probe_web(self,profile,observed,row):
-        url='https://'+row['domain']
+        url='https://'+row['domain']+(':'+str(int(observed['public_port'])) if row.get('direct') else '')
         try:
             with requests.Session() as session:
                 session.trust_env=False
@@ -259,7 +280,7 @@ class GatewaySync:
                 if len(owned)>1:
                     raise ValueError('Cloudflare har flere regler for gatewayen. Kontrollér Origin Rules.')
                 if owned:
-                    remaining=[r['domain'] for r in config['routes'] if zone==current_zone and not r.get('fjordflix')]
+                    remaining=[r['domain'] for r in config['routes'] if zone==current_zone and not (r.get('fjordflix') or r.get('direct'))]
                     path=base+'/rulesets/'+ruleset['id']+'/rules/'+owned[0]['id']
                     if remaining:
                         rule={k:owned[0][k] for k in ('ref','description','action','action_parameters') if k in owned[0]}
@@ -298,7 +319,7 @@ class GatewaySync:
         zone='/zones/'+key['zone_id']
         name=self.cf(token,'GET',zone)['name'].lower()
         domains=[r['domain'] for r in config['routes']]
-        web_domains=[r['domain'] for r in config['routes'] if not r.get('fjordflix')]
+        web_domains=[r['domain'] for r in config['routes'] if not (r.get('fjordflix') or r.get('direct'))]
         if any(not d.endswith('.'+name) for d in domains):
             raise ValueError('Alle subdomæner skal tilhøre den valgte Cloudflare-zone.')
         self.cleanup(profile)
@@ -346,7 +367,7 @@ class GatewaySync:
         for row,record in zip(config['routes'],records):
             if row.get('fjordflix') and stream_error:
                 continue
-            proxied=not row.get('fjordflix',False)
+            proxied=not (row.get('fjordflix') or row.get('direct'))
             payload={'type':'A','name':row['domain'],'content':str(address),'proxied':proxied,
                      'ttl':1 if proxied else 60,'comment':self.record_marker(profile)}
             with self.store.lock:
@@ -380,7 +401,7 @@ class GatewaySync:
                     route_status[row['domain']]={'state':'ready','message':'HTTPS-test godkendt. FjordFlix-streamadressen er opdateret.','url':url}
                 urls.append(url)
             else:
-                urls.append('https://'+row['domain'])
+                urls.append('https://'+row['domain']+(':'+str(port) if row.get('direct') else ''))
         mc=config.get('minecraft',{})
         if mc.get('enabled'):
             try:

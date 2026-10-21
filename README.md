@@ -60,6 +60,45 @@ Use a zone-scoped token with **Zone / DNS / Edit**, **Zone / Zone / Read** and *
 
 Gateway web ingress is restricted to Cloudflare source networks. Per-domain indicators report verified readiness. The gateway's automatic IP/port synchronization can be enabled or paused.
 
+### Optional direct access (Plex and other apps)
+
+Each hostname target has an optional **Direkte adgang / DNS only** checkbox,
+off by default when creating or editing a gateway. Existing targets retain their
+current behavior. Direct targets get DNS-only A records, are excluded from the
+Cloudflare Origin Rule, and accept direct HTTPS connections to all application
+paths through the VPN gateway. Other targets keep their Cloudflare-only access.
+This option and the separate FjordFlix media mode are mutually exclusive.
+
+For Plex, select HTTP and the local server IP/port (for example
+`192.168.1.96:32400`). The gateway still provides public HTTPS with its ACME
+certificate. Use the address shown on the gateway card, including the assigned
+VPN port, such as `https://plex.example.com:38850`, in Plex's advanced Network
+setting **Custom server access URLs**. The direct address carries both Plex web
+and streaming traffic. DNS and the displayed address follow VPN endpoint changes
+when automatic synchronization is enabled; Plex settings are not automatically
+updated, so update the custom URL if the VPN port changes. No home-router port
+forward is required for this VPN ingress. The target app must require its own
+authentication because direct targets bypass Cloudflare access controls.
+
+### Direct TCP forwarding on the same gateway
+
+Gateway settings include an optional **TCP-videresendelse (f.eks. Plex)** section.
+Enter the local IPv4 address and TCP port, such as `192.168.1.96:32400`.
+No domain or extra Cloudflare configuration is required for this target. The
+existing HTTPS gateway still uses its configured domains and Cloudflare key.
+
+The observer reserves and renews a separate Proton NAT-PMP port on the same VPN
+IP. HTTPS, Minecraft and FjordSeed retain their existing mappings. The gateway
+card shows a separate public TCP endpoint with a copy button. Only TCP is
+forwarded, to one local target; application authentication is required.
+
+The extra port and IP can change. Plex must publish this endpoint to clients;
+this feature does not update Plex settings or route Plex's outbound traffic
+through the VPN. Merely entering the port under Remote Access does not correct
+an incorrectly detected public IP. Use a suitable advertised endpoint or route
+Plex's discovery traffic through the VPN separately. Direct TLS is handled by
+the target application; the gateway's domain certificate is not used here.
+
 ### Minecraft Java on the same gateway
 
 The Gameserver section routes one local Java server through the same VPN IP/port as HTTPS. It may use another Cloudflare zone and saved token with DNS Edit/Zone Read. Automation manages DNS-only A/SRV records and checks the public status response. Bedrock/UDP forwarding is not implemented. TCP profiles can also enable automatic Minecraft SRV-port updates with DNS sync.

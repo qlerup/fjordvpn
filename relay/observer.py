@@ -3,7 +3,6 @@ import io
 import ipaddress
 from html.parser import HTMLParser
 import json
-import hashlib
 import os
 import re
 from pathlib import Path
@@ -129,6 +128,8 @@ class LocationPage(HTMLParser):
 
 
 def observe():
+    from relay.gateway_tcp import Forwarder
+    tcp = Forwarder(stop)
     process, current = None, None
     location = PublicLocation()
     networks = [ipaddress.IPv4Network(n) for n in os.environ['LAN_SUBNETS'].split(',')]
@@ -137,6 +138,7 @@ def observe():
             state = dict(healthy=False, public_ip='', public_port='', country='', relay_active=False,
                          checked_at=time.time(), message='Venter på VPN-forbindelse', revision='')
             wanted = None
+            direct = {'enabled': False}
             try:
                 settings = json.loads(Path('/config/settings.json').read_text())
                 state['revision'] = settings['revision']
@@ -154,12 +156,13 @@ def observe():
                         state['message'] = 'VPN og offentlig port er klar'
                         if settings['enabled']:
                             if settings.get('mode')=='gateway':
-                                from gateway import settings as validate_gateway
+                                from gateway import settings as validate_gateway, process_key
                                 validated=validate_gateway({'enabled':True,'key_id':'0'*32,'routes':settings['routes'],
-                                    'minecraft':settings.get('minecraft',{'enabled':False})},networks)
+                                    'minecraft':settings.get('minecraft',{'enabled':False}),
+                                    'tcp':settings.get('tcp',{'enabled':False})},networks)
+                                direct = validated['tcp']
                                 token=Path('/config/gateway-token').read_bytes()
-                                wanted=('gateway',port,json.dumps(validated['routes'],sort_keys=True),
-                                        settings['revision'],hashlib.sha256(token).hexdigest(),json.dumps(validated['minecraft'],sort_keys=True))
+                                wanted=process_key(validated,port,token)
                             else:
                                 target = ipaddress.IPv4Address(settings['host'])
                                 target_port = settings['port']
@@ -173,7 +176,7 @@ def observe():
                 if wanted:
                     if wanted[0]=='gateway':
                         from gateway import caddy_config
-                        config=caddy_config(json.loads(wanted[2]),wanted[1],minecraft=json.loads(wanted[5]))
+                        config=caddy_config(json.loads(wanted[2]),wanted[1],minecraft=json.loads(wanted[4]))
                         path=Path('/observed/caddy.json')
                         path.write_text(json.dumps(config));path.chmod(0o600)
                         command=['caddy','run','--config',str(path)]
@@ -185,6 +188,8 @@ def observe():
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     current = wanted
             state['relay_active'] = bool(process and process.poll() is None)
+            state['tcp_status'] = tcp.update(direct, state['public_ip'], state['public_port'],
+                                             state['revision'], state['healthy'])
             if state['relay_active']:
                 state['message'] = 'HTTPS-gateway aktiv' if wanted and wanted[0]=='gateway' else 'TCP-videresendelse aktiv'
             state['checked_at'] = time.time()
@@ -193,6 +198,7 @@ def observe():
             temporary.replace('/observed/status.json')
             shutdown.wait(2)
     finally:
+        tcp.close()
         stop(process)
 
 

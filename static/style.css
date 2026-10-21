@@ -22,3 +22,4 @@
 .card-actions{flex-wrap:wrap}.delete-profile{color:#ffacb9}.danger{background:#713c4a;color:#fff;border:1px solid #aa576e}.danger:hover{background:#8c4558}
 
 .route-status-dot.is-off{background:#81919c}.seedbox-status{margin-top:14px}
+#gateway-tcp-fields{border:0;padding:0;margin:16px 0 0;min-width:0}
