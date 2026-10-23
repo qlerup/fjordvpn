@@ -201,7 +201,60 @@ class Runtime:
                         status.update(state='error', message='TCP-porten kunne ikke åbnes eller fornyes.')
                     result['tcp_status'][row['id']] = status
             result['seedbox_status'] = self.seedbox_status(p, result)
+        result['fjorddrop_status'] = self.fjorddrop_status(p, result)
         return result
+
+    def fjorddrop_status(self, p, observed):
+        """Discover automatically managed relays on both profile types."""
+        pending = dict(state='pending', message='Afventer FjordDrop og VPN-relæ.', public_port=None)
+        try:
+            vpn = self.container(p['id'], 'vpn')
+            children = self.client.containers.list(all=True, filters={'label':'dk.fjorddrop.vpn-owner'})
+            children = [c for c in children if (
+                c.labels.get('dk.fjordvpn.profile') == p['id']
+                and c.labels.get('dk.fjorddrop.vpn-project') == self.project
+                or vpn and c.labels.get('dk.fjorddrop.vpn-container') == vpn.id)]
+            results = []
+            for child in children:
+                item = dict(pending)
+                if child.status != 'running':
+                    item.update(state='off', message='FjordDrops relæ er stoppet.')
+                elif not vpn or vpn.status != 'running' or not p['desired'] or observed['state'] != 'online':
+                    item['message'] = 'Afventer den valgte VPN-forbindelse.'
+                elif (child.attrs['HostConfig']['NetworkMode'] != 'container:'+vpn.id
+                      or child.labels.get('dk.fjorddrop.vpn-container') != vpn.id
+                      or child.attrs['State']['StartedAt'] < vpn.attrs['State']['StartedAt']):
+                    item['message'] = 'FjordDrop skifter til den aktuelle VPN-forbindelse.'
+                else:
+                    try:
+                        stream, _ = child.get_archive('/state/status.json')
+                        payload = bytearray()
+                        for chunk in stream:
+                            payload.extend(chunk)
+                            if len(payload)>65536:
+                                raise ValueError('Oversized relay report')
+                        with tarfile.open(fileobj=io.BytesIO(payload)) as archive:
+                            member = archive.getmember('status.json')
+                            if not member.isfile() or member.size>4096:
+                                raise ValueError('Invalid relay report')
+                            status = json.load(archive.extractfile(member))
+                        port = status.get('port')
+                        if (0 <= time.time()-status['checked_at'] < 35
+                            and status.get('host') == observed['public_ip']
+                            and type(port) is int and 1024 <= port <= 65535
+                            and str(status.get('local_port')) == child.labels.get('dk.fjorddrop.vpn-port')):
+                            item.update(state='ready', public_port=port,
+                                message='VPN-relæ klar. FjordDrop har automatisk oprettet egne porte til krypteret fildeling.')
+                        else:
+                            item['message'] = 'Afventer en frisk og gyldig status fra FjordDrop.'
+                    except docker.errors.NotFound:
+                        item['message'] = 'FjordDrop opretter relæ og VPN-porte.'
+                    except (docker.errors.DockerException, OSError, ValueError, KeyError, TypeError, tarfile.TarError):
+                        item.update(state='error', message='FjordDrops forbindelsesstatus kunne ikke kontrolleres.')
+                results.append(item)
+            return results
+        except (docker.errors.DockerException, ValueError, KeyError, TypeError):
+            return [dict(pending, state='error', message='FjordDrop-forbindelser kunne ikke kontrolleres.')]
 
     def seedbox_status(self, p, observed):
         """Read only the worker's public health report, never its credentials."""

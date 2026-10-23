@@ -64,6 +64,15 @@ function card(p,legacy=false){
   if(state==='ready')item.append(el('span','small muted','TCP/UDP :'+check.public_port));
   item.append(el('span','gateway-route-check small '+(state==='error'?'route-error':'muted'),check.message));main.append(item);
  }
+ for(const check of p.fjorddrop_status||[]){
+  const state=['ready','pending','error','off'].includes(check.state)?check.state:'pending';
+  const label={ready:'Forbundet',pending:'Forbinder',error:'Fejl',off:'Stoppet'}[state];
+  const item=el('div','gateway-card-route fjorddrop-status'),name=el('span','gateway-route-name');
+  const dot=el('span','route-status-dot is-'+state);dot.setAttribute('role','img');dot.setAttribute('aria-label',label+': '+check.message);dot.title=check.message;dot.tabIndex=0;
+  name.append(dot,el('span','','FjordDrop · '+label));item.append(name);
+  if(state==='ready')item.append(el('span','small muted','VPN-relæ · TCP/UDP :'+check.public_port));
+  item.append(el('span','gateway-route-check small '+(state==='error'?'route-error':'muted'),check.message));main.append(item);
+ }
  const footer=el('div','card-footer');footer.append(el('p','card-message',p.message||''));const actions=el('div','card-actions');
  if(legacy){if(p.url){const link=el('a','','Åbn ↗');link.href=p.url;link.target='_blank';link.rel='noopener';actions.append(link);}}
  else{const edit=el('button','','Indstillinger');edit.addEventListener('click',()=>p.gateway?.enabled?openGatewayForm(p):openForm(p));const power=el('button','',p.desired?'Sluk':'Start');power.addEventListener('click',async()=>{power.disabled=true;try{await api(`/api/profiles/${p.id}/power`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!p.desired})});toast(p.desired?'VPN slukkes…':'VPN starter…');await refresh();}catch(e){toast(e.message);}finally{power.disabled=false;}});const remove=el('button','delete-profile','Slet');remove.type='button';remove.disabled=!!p.desired;remove.title=p.desired?'Sluk VPN’en, før du sletter den.':'Slet VPN-profil';remove.addEventListener('click',()=>openDelete(p));actions.append(edit,power,remove);}
