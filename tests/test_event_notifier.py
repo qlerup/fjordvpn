@@ -17,6 +17,46 @@ class Hub:
         return {"ok": True}
 
 
+def test_vpn_port_change_survives_restart_outage_and_retries(tmp_path):
+    hub = Hub()
+    notifier = EventNotifier(tmp_path, hub, "fjordvpn")
+    row = dict(id="a", name="Proton A", desired=True, state="online", public_port=12345)
+    notifier.observe_vpn([row])
+    assert not notifier.state["pending"]
+    notifier = EventNotifier(tmp_path, hub, "fjordvpn")
+    for port in (None, "", 0, True, 65536, "12345"):
+        notifier.observe_vpn([dict(row, public_port=port)])
+    notifier.observe_vpn([dict(row, state="connecting", public_port=None)], now=1000)
+    notifier.observe_vpn([row], now=1001)
+    assert not notifier.state["pending"]
+    notifier.observe_vpn([dict(row, public_port=23456)])
+    event = dict(notifier.state["pending"][0])
+    assert event["type"] == "vpn_port_changed"
+    assert event["profile"] == "Proton A"
+    assert event["previous_port"] == 12345 and event["port"] == 23456
+    hub.fail = True
+    notifier.flush()
+    notifier = EventNotifier(tmp_path, hub, "fjordvpn")
+    notifier.observe_vpn([dict(row, public_port=23456)])
+    assert notifier.state["pending"] == [event]
+    hub.fail = False
+    notifier.flush()
+    assert len(hub.calls) == 1
+    notifier.observe_vpn([dict(row, desired=False, public_port=None)])
+    notifier.observe_vpn([dict(row, public_port=34567)])
+    assert notifier.state["pending"][0]["previous_port"] == 23456
+
+
+def test_vpn_first_assignment_after_waiting_and_deleted_profiles(tmp_path):
+    notifier = EventNotifier(tmp_path, Hub(), "fjordvpn")
+    row = dict(id="a", name="Proton A", desired=True, state="connecting", public_port=None)
+    notifier.observe_vpn([row])
+    notifier.observe_vpn([dict(row, state="online", public_port=12345)])
+    assert notifier.state["pending"][0]["previous_port"] is None
+    notifier.observe_vpn([])
+    assert notifier.state["vpn_ports"] == {}
+
+
 def test_vpn_reports_sustained_multiple_failures_once_and_recovery(tmp_path):
     hub = Hub()
     notifier = EventNotifier(tmp_path, hub, "fjordvpn")

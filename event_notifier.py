@@ -29,6 +29,7 @@ class EventNotifier:
             self.state = {}
         self.state.setdefault("pending", [])
         self.state.setdefault("vpn", {})
+        self.state.setdefault("vpn_ports", {})
         self.state.setdefault("seed_seen", {})
         self.state.setdefault("seed_initialized", False)
 
@@ -78,6 +79,9 @@ class EventNotifier:
         failed, recovered = [], []
         with self.lock:
             tracked = self.state["vpn"]
+            ports = self.state["vpn_ports"]
+            ports_before = dict(ports)
+            present = {row.get("id") for row in statuses if isinstance(row.get("id"), str)}
             before = json.dumps(tracked, sort_keys=True)
             active = set()
             for row in statuses:
@@ -87,7 +91,18 @@ class EventNotifier:
                 active.add(ident)
                 item = tracked.setdefault(ident, {"first_bad": None, "alerted": False})
                 online = row.get("state") == "online"
+                if ident not in ports and not online:
+                    ports[ident] = None
                 if online:
+                    port = row.get("public_port")
+                    valid = type(port) is int and 1 <= port <= 65535
+                    if ident not in ports:
+                        # Baseline existing assignments without a startup flood.
+                        ports[ident] = port if valid else None
+                    elif valid and ports[ident] != port:
+                        self._queue("vpn_port_changed", profile=str(row.get("name") or ident)[:90],
+                                    previous_port=ports[ident], port=port)
+                        ports[ident] = port
                     if item["alerted"]:
                         recovered.append(str(row.get("name") or ident)[:90])
                     item["alerted"] = False
@@ -102,11 +117,14 @@ class EventNotifier:
             for ident in list(tracked):
                 if ident not in active:
                     del tracked[ident]
+            for ident in list(ports):
+                if ident not in present:
+                    del ports[ident]
             if failed:
                 self._queue("vpn_failed", profiles=failed[:20])
             if recovered:
                 self._queue("vpn_recovered", profiles=recovered[:20])
-            if failed or recovered or json.dumps(tracked, sort_keys=True) != before:
+            if failed or recovered or ports != ports_before or json.dumps(tracked, sort_keys=True) != before:
                 self._save()
 
     def observe_seed(self, rows, feeds):

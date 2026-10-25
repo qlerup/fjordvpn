@@ -185,8 +185,12 @@ When managed by FjordHub, VPN profiles are checked by the existing
 3-second lifecycle monitor. Sustained faults generate one grouped notification
 containing the *names* of failing profiles (not configuration or credentials).
 Recovery generates a separate message. Manually stopped profiles are ignored.
+Public port changes generate a message with the profile name and old/new port.
+An existing port at first observation is a silent baseline; a new assignment
+after waiting for a port is announced too. Missing/offline readings do not erase
+the last port, and persisted observations prevent duplicate alerts on restart.
 Transient connection attempts are given 60 seconds; explicit errors 12 seconds.
 The `event_notifier.py` durable queue survives restarts and retries a down
 FjordHub without interrupting VPN connectivity. Delivery uses the existing
 `FJORDHUB_URL`/`FJORDHUB_API_KEY` settings; no additional secret is needed.
-Update FjordHub first so the authenticated notification API is available.
+Update FjordHub first, then FjordVPN, so the API accepts the port-change event.
