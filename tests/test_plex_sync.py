@@ -156,4 +156,4 @@ def test_xml_helper_never_follows_redirects_and_rejects_auth_errors():
         PlexSync.xml(session,'GET','http://192.168.1.96:32400/:/prefs',TOKEN)
     kwargs=session.request.call_args.kwargs
     assert kwargs['allow_redirects'] is False
-    assert kwargs['headers']=={'X-Plex-Token':TOKEN,'X-Plex-Client-Identifier':'fjordvpn-port-sync'}
+    assert kwargs['headers']=={'X-Plex-Token':TOKEN,'X-Plex-Client-Identifier':'fjordvpn-port-sync','X-Plex-Product':'FjordVPN'}

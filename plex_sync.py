@@ -50,7 +50,7 @@ class PlexSync:
     @staticmethod
     def xml(session,method,url,token=None,params=None):
         # Never place the credential in URLs, redirects, public probes or logs.
-        headers={'X-Plex-Client-Identifier':'fjordvpn-port-sync'}
+        headers={'X-Plex-Client-Identifier':'fjordvpn-port-sync','X-Plex-Product':'FjordVPN'}
         if token:
             headers['X-Plex-Token']=token
         with session.request(method,url,headers=headers,params=params,timeout=(3,5),
