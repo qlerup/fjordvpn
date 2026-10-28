@@ -6,7 +6,14 @@ import time
 import xml.etree.ElementTree as ET
 
 import requests
-from relay.gateway_tcp import target_rows
+from configuration import plex_targets
+
+
+def port_state(profile, observed, row):
+    if row['id'] == 'solo':
+        return {'state':'ready' if observed.get('relay_active') and observed.get('state') == 'online' else 'pending',
+                'public_port':observed.get('public_port')}
+    return observed.get('tcp_status', {}).get(row['id'], {})
 
 
 class PlexSync:
@@ -16,12 +23,12 @@ class PlexSync:
 
     @staticmethod
     def signature(profile,observed,row):
-        status=observed.get('tcp_status',{}).get(row['id'],{})
+        status=port_state(profile, observed, row)
         return (profile['revision'],observed.get('public_ip'),status.get('state'),status.get('public_port'))
 
     def status(self,profile,observed):
         result={}
-        for row in target_rows(profile.get('gateway',{}).get('tcp',{})):
+        for row in plex_targets(profile):
             if not row.get('plex_sync'):
                 continue
             cached=self.statuses.get((profile['id'],row['id']),{})
@@ -43,7 +50,9 @@ class PlexSync:
     @staticmethod
     def xml(session,method,url,token=None,params=None):
         # Never place the credential in URLs, redirects, public probes or logs.
-        headers={'X-Plex-Token':token} if token else {}
+        headers={'X-Plex-Client-Identifier':'fjordvpn-port-sync'}
+        if token:
+            headers['X-Plex-Token']=token
         with session.request(method,url,headers=headers,params=params,timeout=(3,5),
                              allow_redirects=False,stream=True) as response:
             if response.status_code in (401,403):
@@ -57,7 +66,7 @@ class PlexSync:
         return ET.fromstring(content) if content.strip() else None
 
     def sync(self,profile,observed,row):
-        state=observed.get('tcp_status',{}).get(row['id'],{})
+        state=port_state(profile, observed, row)
         address=ipaddress.IPv4Address(observed['public_ip'])
         port=state.get('public_port')
         if (state.get('state')!='ready' or not address.is_global or type(port) is not int
@@ -95,14 +104,23 @@ class PlexSync:
                 if url not in urls:
                     urls.append(url)
                 wanted=','.join(urls)
-                if wanted!=values['customConnections']:
-                    self.xml(session,'PUT',local+'/:/prefs',token,{'customConnections':wanted})
+                changes = {'customConnections':wanted} if wanted!=values['customConnections'] else {}
+                full_tunnel = row['id']=='solo' and profile.get('internet_gateway',{}).get('enabled')
+                if full_tunnel:
+                    desired = {'ManualPortMappingMode':'1', 'ManualPortMappingPort':str(port),
+                               'PublishServerOnPlexOnlineKey':'1'}
+                    changes.update({k:v for k,v in desired.items() if values.get(k)!=v})
+                if changes:
+                    self.xml(session,'PUT',local+'/:/prefs',token,changes)
                     check=self.xml(session,'GET',local+'/:/prefs',token)
                     saved={p.get('id'):p.get('value','') for p in check}
                     if saved.get('customConnections')!=wanted:
                         raise ValueError('Plex bekræftede ikke den nye adresse.')
                 self.current(profile,observed,row)
-                ledger[row['id']]={'url':url,'server_id':identity.get('machineIdentifier')}
+                if full_tunnel and (changes or not old.get('internet_gateway')):
+                    self.xml(session,'PUT',local+'/myplex/refreshReachability',token)
+                ledger[row['id']]={'url':url,'server_id':identity.get('machineIdentifier'),
+                                   'internet_gateway':bool(full_tunnel)}
                 from store import atomic
                 atomic(ledger_path,json.dumps(ledger))
         return url
@@ -110,7 +128,7 @@ class PlexSync:
     def tick(self):
         active=set()
         for profile in self.store.all():
-            for row in target_rows(profile.get('gateway',{}).get('tcp',{})):
+            for row in plex_targets(profile):
                 if not row.get('plex_sync') or not profile['desired']:
                     continue
                 key=(profile['id'],row['id']);active.add(key)
@@ -120,7 +138,7 @@ class PlexSync:
                         and time.monotonic()<self.next_check.get(key,0)):
                     continue
                 self.next_check[key]=time.monotonic()+30
-                if observed.get('state')!='online' or observed.get('tcp_status',{}).get(row['id'],{}).get('state')!='ready':
+                if observed.get('state')!='online' or port_state(profile, observed, row).get('state')!='ready':
                     result={'state':'pending','message':'Afventer VPN og Plex-målets TCP-port.'}
                 else:
                     try:

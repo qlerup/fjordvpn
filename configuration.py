@@ -94,3 +94,14 @@ def validate_target(data, networks):
     if enabled and (not host or port is None):
         raise ValueError('Vælg lokal IP og port for videresendelsen.')
     return {'name': name.strip(), 'host': host, 'port': port, 'relay_enabled': enabled}
+
+
+def plex_targets(profile):
+    from relay.gateway_tcp import target_rows
+    if profile.get('gateway', {}).get('enabled'):
+        return target_rows(profile['gateway'].get('tcp', {}))
+    config = profile.get('plex_sync', {})
+    if not config.get('enabled'):
+        return []
+    return [dict(id='solo', host=profile.get('host'), port=profile.get('port'),
+                 plex_sync=True, plex_token=config.get('token', ''))]

@@ -155,4 +155,5 @@ def test_xml_helper_never_follows_redirects_and_rejects_auth_errors():
     with pytest.raises(ValueError,match='Plex-login'):
         PlexSync.xml(session,'GET','http://192.168.1.96:32400/:/prefs',TOKEN)
     kwargs=session.request.call_args.kwargs
-    assert kwargs['allow_redirects'] is False and kwargs['headers']=={'X-Plex-Token':TOKEN}
+    assert kwargs['allow_redirects'] is False
+    assert kwargs['headers']=={'X-Plex-Token':TOKEN,'X-Plex-Client-Identifier':'fjordvpn-port-sync'}

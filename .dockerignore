@@ -10,6 +10,8 @@
 !stream_sync.py
 !gateway.py
 !plex_sync.py
+!internet_gateway.py
+!internet_gateway_worker.py
 !minecraft_gateway.py
 !seedbox_export.py
 !relay/

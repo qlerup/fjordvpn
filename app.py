@@ -177,8 +177,11 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
     def profiles():
         with store.lock:
             def listed(p):
+                from internet_gateway import config_ready
                 observed=runtime.status(p)
                 return dict(observed, stream_status=stream_sync.statuses.get(p['id'], {}),
+                    internet_config_ready=bool(p.get('internet_gateway',{}).get('enabled') and
+                        config_ready(store.directory(p['id']))),
                     gateway_status=gateway_sync.status(p,observed),
                     plex_status=plex_sync.status(p,observed),
                     cloudflare_token_saved=(store.directory(p['id'])/'cloudflare-token').exists())
@@ -240,6 +243,22 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
             return {'ok':True}
         except ValueError as e:
             return jsonify(error=str(e)),400
+
+    @app.get('/api/profiles/<ident>/internet-config')
+    def download_internet_config(ident):
+        from internet_gateway import client_config
+        from flask import Response
+        try:
+            with store.lock:
+                profile = store.get(ident)
+                if not profile.get('internet_gateway',{}).get('enabled'):
+                    raise ValueError('Slå internetgateway til på VPN-profilen først.')
+                content = client_config(profile, store.directory(ident), store.networks)
+            return Response(content, mimetype='application/octet-stream', headers={
+                'Content-Disposition':f'attachment; filename="fjvpn-{ident[:8]}.conf"',
+                'Cache-Control':'no-store'})
+        except (ValueError, FileNotFoundError):
+            return jsonify(error='WireGuard-konfigurationen er ikke klar. Start VPN’en og prøv igen.'),409
 
     stop_event=threading.Event()
     notifier=EventNotifier(root,hub,'fjordvpn')

@@ -194,3 +194,61 @@ The `event_notifier.py` durable queue survives restarts and retries a down
 FjordHub without interrupting VPN connectivity. Delivery uses the existing
 `FJORDHUB_URL`/`FJORDHUB_API_KEY` settings; no additional secret is needed.
 Update FjordHub first, then FjordVPN, so the API accepts the port-change event.
+
+
+### Optional server internet traffic on a solo VPN
+
+In an ordinary VPN profile, enable **Send serverens internettrafik gennem denne VPN**.
+The TCP target is the server allowed to connect. FjordVPN creates a separate private
+WireGuard link between that server and this profile's Proton namespace. Other profiles,
+the router, and other LAN devices keep their existing routes. No additional LAN IP or
+DHCP reservation is needed. The Docker host's LAN address is detected automatically.
+The host must have kernel WireGuard support and allow the server to reach the displayed
+local UDP endpoint. Each profile reserves its local UDP port across normal recreations.
+Changing the Docker host's LAN address requires exporting the client configuration again.
+
+Save and start the VPN, then choose **Hent WireGuard til serveren**. Install the downloaded
+configuration on the target Linux server using `wireguard-tools`, `iptables`, and a
+`resolvconf` provider (for example `openresolv`). Keep its generated `fjvpn-xxxxxxxx.conf`
+name, put it in `/etc/wireguard/` with mode `0600`, and enable the matching
+`wg-quick@fjvpn-xxxxxxxx` service. The profile contains a private key: do not share it or
+commit it. Status changes to connected only after a recent authenticated handshake.
+Local IPv4 traffic remains local; public IPv4 traffic and DNS use the WireGuard link.
+IPv6 internet traffic is rejected by the Linux client guard. The generated guard survives
+`wg-quick down`, preventing a fallback to the ordinary internet connection.
+
+For Plex, also enable **Opdater automatisk Plex-adressen og porten** and supply its
+existing token. Credentials remain private and an empty token field preserves the saved
+credential for the same target. Only one profile can manage each Plex endpoint. Every
+30 seconds FjordVPN verifies the public HTTPS endpoint, certificate, and server identity
+before updating the custom server URL. With the internet option enabled it also sets
+Plex's manual public port and enables its native remote-access check. Restart Plex after
+first connecting the client so it detects its new outbound public IP. Ordinary TCP-only
+profiles retain URL-only synchronization and do not change the native remote-access mode.
+
+Turning the VPN off blocks this link. Turning the option off does not uninstall the
+client or remove its guard. To deliberately restore the server's ordinary connection,
+first stop and disable its `wg-quick` service, then remove the `OUTPUT` jump to
+`FJVPN_<first eight profile-id characters>` from both `iptables` and `ip6tables`, and
+remove those two chains. Do this from a LAN/console session. The profile ID is visible
+in the download URL. Keep the app-data backup (including all `internet-*.key` files);
+loss of either private key requires replacing the client configuration.
+
+
+On a systemd-resolved installation, make sure `/etc/resolv.conf` points to the
+systemd-resolved stub resolver; otherwise a compatibility `resolvconf` command can
+succeed while the machine still reads its old static DNS file. On Proxmox LXC,
+preserve that choice using `/etc/.pve-ignore.resolv.conf`. Back up the original resolver
+file first. For Plex startup, add a systemd service drop-in with `Requires=` and
+`After=` pointing at its `wg-quick@fjvpn-xxxxxxxx.service`, so Plex starts after the
+client routes and guard are installed. If uninstalling the link, remove that service
+drop-in as well as the client guard and restore the original resolver configuration.
+
+`tests/container_internet_gateway.py` is the manual Docker integration check. It uses
+only temporary test containers and generated test keys, never Proton credentials. It
+checks a real kernel WireGuard handshake, a 5 MiB transfer with NAT, server access
+through an OUTPUT-drop firewall, failure with the VPN interface down, and persistent
+client blocking after removal of its WireGuard interface. It removes only containers
+and the bridge labelled as its own test resources. Run it inside the built test image
+with `/var/run/docker.sock`, `/opt/fjordvpn-internet-itest:/test`, and the script mounted;
+the test image tag is `fjordvpn-app:internet-candidate`.

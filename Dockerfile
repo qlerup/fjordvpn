@@ -6,12 +6,14 @@ COPY --from=gateway-builder /usr/bin/caddy /usr/bin/caddy
 # The observer drops every capability. Caddy's file capability otherwise makes
 # execve fail with EPERM; forwarded high ports need no privileged bind right.
 RUN python -c "import os; p='/usr/bin/caddy'; os.removexattr(p,'security.capability') if 'security.capability' in os.listxattr(p) else None"
-RUN apk add --no-cache socat
+RUN apk add --no-cache socat iproute2 iptables wireguard-tools
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py event_notifier.py hub_email.py configuration.py hub.py runtime.py store.py stream_sync.py gateway.py minecraft_gateway.py ./
 COPY seedbox_export.py plex_sync.py ./
+COPY internet_gateway.py ./
+COPY internet_gateway_worker.py ./
 COPY relay ./relay
 COPY templates ./templates
 COPY static ./static

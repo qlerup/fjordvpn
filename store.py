@@ -6,7 +6,8 @@ import shutil
 import threading
 import uuid
 
-from configuration import parse_wireguard, validate_target
+from configuration import parse_wireguard, validate_target, plex_targets
+import internet_gateway
 from stream_sync import settings as stream_settings
 from gateway import settings as gateway_settings, game_rows
 from relay.gateway_tcp import target_rows
@@ -111,6 +112,11 @@ class Store:
         relay={
             'host': profile['host'], 'port': profile['port'],
             'enabled': profile['relay_enabled'], 'revision': profile['revision']}
+        if profile.get('internet_gateway', {}).get('enabled'):
+            public = json.loads((folder/'internet-public.json').read_text())
+            relay['host'] = internet_gateway.addresses(profile)[1]
+            atomic(folder/'internet-settings.json', json.dumps({'client_public':public['client'],
+                'profile':{k:profile[k] for k in ('id','host','internet_gateway')}}))
         gateway=profile.get('gateway',{})
         if gateway.get('enabled'):
             relay.update(enabled=True,mode='gateway',routes=gateway['routes'],minecraft=gateway.get('minecraft',{'enabled':False}),
@@ -160,7 +166,7 @@ class Store:
             if not token and not (saved and same):
                 raise ValueError('Indtast Plex-tokenet for at aktivere automatisk Plex-adresse.')
             if any(other['id']!=previous.get('id') and any(r.get('plex_sync') and (r['host'],r['port'])==endpoint
-                   for r in target_rows(other.get('gateway',{}).get('tcp',{}))) for other in self.all()):
+                   for r in plex_targets(other)) for other in self.all()):
                 raise ValueError('En anden VPN opdaterer allerede denne Plex-server.')
         domains={r['domain'] for r in config['routes']}
         for mc in game_rows(config):
@@ -181,14 +187,14 @@ class Store:
         return config
 
     def plex_token_path(self, ident, target):
-        if not isinstance(target,str) or not re.fullmatch(r'(?:[0-9]|1[0-9]|2[0-4])',target):
+        if not isinstance(target,str) or not re.fullmatch(r'(?:solo|[0-9]|1[0-9]|2[0-4])',target):
             raise ValueError('Ukendt Plex-mål.')
         return self.directory(ident)/('plex-token-'+target)
 
     def save_plex_tokens(self, profile, data, previous=None):
-        rows=target_rows(profile.get('gateway',{}).get('tcp',{}))
-        raw={r['id']:r for r in target_rows(data.get('gateway',{}).get('tcp',{}))}
-        old={r['id']:r for r in target_rows((previous or {}).get('gateway',{}).get('tcp',{}))}
+        rows=plex_targets(profile)
+        raw={r['id']:r for r in plex_targets(data)}
+        old={r['id']:r for r in plex_targets(previous or {})}
         for row in rows:
             path=self.plex_token_path(profile['id'],row['id'])
             token=raw.get(row['id'],{}).get('plex_token')
@@ -198,6 +204,48 @@ class Store:
                 path.unlink(missing_ok=True)
         for ident in old.keys()-{r['id'] for r in rows}:
             self.plex_token_path(profile['id'],ident).unlink(missing_ok=True)
+
+    def prepare_solo(self, data, previous, target, gateway):
+        config = internet_gateway.settings(data.get('internet_gateway', previous.get('internet_gateway', {})),
+            target, self.networks, previous.get('internet_gateway'),
+            used=[p.get('internet_gateway', {}).get('subnet') for p in self.all() if p['id'] != previous.get('id')])
+        raw = data.get('plex_sync', previous.get('plex_sync', {}))
+        if not isinstance(raw, dict) or type(raw.get('enabled', False)) is not bool:
+            raise ValueError('Ugyldigt valg af automatisk Plex-adresse.')
+        plex = {'enabled': raw.get('enabled', False)}
+        if gateway['enabled'] and (config['enabled'] or plex['enabled']):
+            raise ValueError('Internetgateway og dette Plex-tilvalg er kun til en solo-VPN.')
+        token = raw.get('token', '')
+        if not isinstance(token, str) or (token and not re.fullmatch(r'[A-Za-z0-9_-]{8,256}', token)):
+            raise ValueError('Indtast et gyldigt Plex-token.')
+        if plex['enabled']:
+            if not target['relay_enabled']:
+                raise ValueError('Automatisk Plex-adresse kræver aktiv TCP-videresendelse.')
+            same = all(previous.get(k) == target[k] for k in ('host','port'))
+            saved = previous.get('id') and self.plex_token_path(previous['id'], 'solo').exists()
+            if not token and not (saved and same):
+                raise ValueError('Indtast Plex-tokenet for at aktivere automatisk Plex-adresse.')
+            if any(p['id'] != previous.get('id') and any(r.get('plex_sync') and
+                   (r['host'],r['port']) == (target['host'],target['port']) for r in plex_targets(p)) for p in self.all()):
+                raise ValueError('En anden VPN opdaterer allerede denne Plex-server.')
+        if config['enabled'] and any(p['id'] != previous.get('id') and
+            p.get('internet_gateway',{}).get('enabled') and p.get('host') == target['host'] for p in self.all()):
+            raise ValueError('Serverens internettrafik styres allerede af en anden VPN.')
+        return config, plex
+
+    def ensure_internet_keys(self, profile):
+        if not profile.get('internet_gateway', {}).get('enabled'):
+            return
+        folder = self.directory(profile['id'])
+        if (folder/'internet-public.json').exists():
+            if not all((folder/name).exists() for name in ('internet-server.key','internet-client.key')):
+                raise ValueError('WireGuard-relæets nøgler mangler. Gendan profilen fra backup.')
+            return
+        server, server_public = internet_gateway.keypair()
+        client, client_public = internet_gateway.keypair()
+        atomic(folder/'internet-server.key', server)
+        atomic(folder/'internet-client.key', client)
+        atomic(folder/'internet-public.json', json.dumps({'server':server_public,'client':client_public}))
 
     def prepare_stream(self, data, previous=None):
         previous = previous or {}
@@ -240,6 +288,7 @@ class Store:
             target = validate_target(data, self.networks)
             stream, token = self.prepare_stream(data)
             gateway=self.prepare_gateway(data)
+            internet, plex = self.prepare_solo(data, {}, target, gateway)
             config, metadata = parse_wireguard(raw)
             if metadata['fingerprint'] in set(reserved) | {p['fingerprint'] for p in self.all()}:
                 raise ValueError('Denne VPN-nøgle bruges allerede. Opret en ny konfiguration hos Proton, så den eksisterende VPN ikke bliver afbrudt.')
@@ -247,6 +296,7 @@ class Store:
                 raise ValueError('Der kan højst oprettes 20 forbindelser.')
             profile = dict(target, **metadata, id=uuid.uuid4().hex, desired=False, revision=uuid.uuid4().hex)
             profile['stream_sync'] = stream
+            profile.update(internet_gateway=internet, plex_sync=plex)
             if gateway['enabled']:
                 profile['gateway']=gateway
             folder = self.directory(profile['id'])
@@ -256,6 +306,7 @@ class Store:
             atomic(folder / 'wg0.conf', config)
             if token:
                 atomic(folder / 'cloudflare-token', token)
+            self.ensure_internet_keys(profile)
             self.save_plex_tokens(profile,data)
             self.save(profile)
             return profile
@@ -264,15 +315,18 @@ class Store:
         with self.lock:
             p = self.get(ident)
             gateway=self.prepare_gateway(data,p)
+            target = validate_target(data, self.networks)
+            internet, plex = self.prepare_solo(data, p, target, gateway)
             stream, token = self.prepare_stream(data, p)
             old_gateway=p.get('gateway',{})
             previous=json.loads(json.dumps(p))
-            p.update(validate_target(data, self.networks), revision=uuid.uuid4().hex)
+            p.update(target, revision=uuid.uuid4().hex, internet_gateway=internet, plex_sync=plex)
             p['stream_sync'] = stream
             if gateway['enabled']:
                 p['gateway']=gateway
             if token:
                 atomic(self.directory(ident) / 'cloudflare-token', token)
+            self.ensure_internet_keys(p)
             self.save_plex_tokens(p,data,previous)
             self.save(p)
             if old_gateway.get('enabled'):

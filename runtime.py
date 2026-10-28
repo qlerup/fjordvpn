@@ -2,11 +2,13 @@
 import json
 import io
 import os
+import ipaddress
 from pathlib import Path
 import tarfile
 import time
 
 import docker
+import internet_gateway
 
 GLUETUN = 'qmcgaw/gluetun@sha256:fa19cc76b2af13d57a8d3dc3066f2ada061b1c761b8aecf989b3877c0486e027'
 LABEL = 'dk.fjordvpn.profile'
@@ -60,6 +62,10 @@ class Runtime:
         ident = p['id']
         vpn, observer = self.container(ident, 'vpn'), self.container(ident, 'relay')
         if not p['desired']:
+            if p.get('internet_gateway', {}).get('enabled'):
+                helper = self.container(ident, 'internet')
+                if helper and helper.status != 'exited':
+                    helper.stop(timeout=5)
             for c in (observer, vpn):
                 if c:
                     c.update(restart_policy={'Name': 'no'})
@@ -68,9 +74,32 @@ class Runtime:
             return
         folder = self.store.directory(ident)
         host_folder=self.host_root/'profiles'/ident
+        internet = internet_gateway.signature(p)
+        local_port = self.internet_port(folder) if internet else None
+        binding = (vpn.attrs.get('HostConfig',{}).get('PortBindings',{}).get(f'{internet_gateway.PORT}/udp') or [{}])[0] if vpn and internet else {}
+        needs_pin = bool(vpn and internet and str(binding.get('HostPort','')) != str(local_port))
+        # Changing the gateway mode/address needs a new network namespace.
+        if vpn and (vpn.labels.get('dk.fjordvpn.internet-config', '') != internet or needs_pin):
+            if vpn.labels.get('dk.fjordvpn.internet-config'):
+                helper = self.container(ident, 'internet')
+                if helper:
+                    helper.stop(timeout=5)
+                    helper.remove()
+            for child in (observer, vpn):
+                if child:
+                    child.stop(timeout=5)
+                    child.remove()
+            vpn = observer = None
         if vpn is None:
+            labels = self.labels(ident, 'vpn')
+            extra = {}
+            if internet:
+                labels['dk.fjordvpn.internet-config'] = internet
+                extra = dict(ports={f'{internet_gateway.PORT}/udp': local_port},
+                    sysctls={'net.ipv4.ip_forward': '1'},
+                    entrypoint=['/bin/sh', '-c', 'iptables -P FORWARD DROP || exit 1; exec /gluetun-entrypoint'])
             vpn = self.client.containers.create(GLUETUN, name=f'fjordvpn-{ident}-vpn',
-                labels=self.labels(ident,'vpn'), cap_add=['NET_ADMIN'], devices=['/dev/net/tun:/dev/net/tun'],
+                labels=labels, cap_add=['NET_ADMIN'], devices=['/dev/net/tun:/dev/net/tun'],
                 environment={'TZ': 'Europe/Copenhagen', 'VPN_SERVICE_PROVIDER': 'custom',
                     'VPN_TYPE': 'wireguard', 'VPN_PORT_FORWARDING': 'on',
                     'VPN_PORT_FORWARDING_PROVIDER': 'protonvpn',
@@ -78,7 +107,7 @@ class Runtime:
                 volumes={str(host_folder / 'wg0.conf'): {'bind': '/gluetun/wireguard/wg0.conf', 'mode': 'ro'},
                          str(host_folder / 'state'): {'bind': '/tmp/gluetun', 'mode': 'rw'}},
                 restart_policy=self.restart_policy,
-                mem_limit='384m', log_config=docker.types.LogConfig(type='json-file', config={'max-size':'5m','max-file':'2'}))
+                mem_limit='384m', log_config=docker.types.LogConfig(type='json-file', config={'max-size':'5m','max-file':'2'}), **extra)
         if vpn.status != 'running':
             # Recreate the dependent namespace after each tunnel restart.
             if observer:
@@ -91,6 +120,8 @@ class Runtime:
             vpn.update(restart_policy=self.restart_policy)
             vpn.start()
         vpn.reload()
+        if internet:
+            self.internet_reconcile(p, vpn, folder, host_folder)
         if p.get('gateway', {}).get('enabled'):
             self.tcp_firewall(vpn, p, folder)
         if observer:
@@ -108,7 +139,8 @@ class Runtime:
             observer = self.client.containers.create(image, name=f'fjordvpn-{ident}-relay',
                 labels=self.labels(ident,'relay'), network_mode='container:' + vpn.id,
                 user=f'{os.getuid()}:{os.getgid()}',
-                environment={'LAN_SUBNETS': ','.join(map(str,self.store.networks))},
+                environment={'LAN_SUBNETS': ','.join(map(str,self.store.networks))+
+                    (','+p['internet_gateway']['subnet'] if internet else '')},
                 volumes={str(host_folder/'state'):{'bind':'/vpn-state','mode':'ro'},
                     str(host_folder/'relay'):{'bind':'/config','mode':'ro'},
                     str(host_folder/'observed'):{'bind':'/observed','mode':'rw'}},
@@ -117,6 +149,63 @@ class Runtime:
                 log_config=docker.types.LogConfig(type='json-file', config={'max-size':'2m','max-file':'2'}),**extra)
         if observer.status != 'running':
             observer.start()
+
+    def internet_port(self, folder):
+        from store import atomic
+        path = folder/'internet-runtime.json'
+        state = json.loads(path.read_text()) if path.exists() else {}
+        if type(state.get('port')) is int and 1 <= state['port'] <= 65535:
+            return state['port']
+        # Reserve a concrete endpoint in Docker's configuration, not an ephemeral
+        # published port (Docker chooses a new ephemeral port on every restart).
+        raw = self.client.containers.run(self.relay_image,
+            ['python','-c',"import socket;s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);s.bind(('0.0.0.0',0));print(s.getsockname()[1])"],
+            entrypoint=[], network_mode='host', cap_drop=['ALL'], read_only=True,
+            remove=True, mem_limit='32m')
+        port = int(raw)
+        if not 1024 <= port <= 65535:
+            raise ValueError('WireGuard-relæets lokale port kunne ikke vælges.')
+        state['port'] = port
+        atomic(path, json.dumps(state))
+        return port
+
+    def internet_reconcile(self, p, vpn, folder, host_folder):
+        from store import atomic
+        path = folder/'internet-runtime.json'
+        state = json.loads(path.read_text()) if path.exists() else {}
+        if not state.get('host'):
+            raw = self.client.containers.run(self.relay_image,
+                ['ip', '-j', '-4', 'route', 'get', p['host']], entrypoint=[],
+                network_mode='host', cap_drop=['ALL'], read_only=True, remove=True,
+                mem_limit='32m', labels=self.labels(p['id'], 'probe'))
+            route = json.loads(raw)[0]
+            host = route.get('prefsrc')
+            if not host or not any(ipaddress.IPv4Address(host) in n for n in self.store.networks):
+                raise ValueError('Docker-værtens lokaladresse kunne ikke findes.')
+            state['host'] = host
+        bindings = vpn.attrs['NetworkSettings']['Ports'].get(f'{internet_gateway.PORT}/udp')
+        if not bindings:
+            raise ValueError('WireGuard-relæets lokale port mangler.')
+        if int(bindings[0]['HostPort']) != state.get('port'):
+            raise ValueError('WireGuard-relæets lokale port stemmer ikke med den gemte klientkonfiguration.')
+        atomic(path, json.dumps(state))
+        helper = self.container(p['id'], 'internet')
+        if helper:
+            helper.reload()
+            if helper.attrs['State']['StartedAt'] < vpn.attrs['State']['StartedAt']:
+                helper.stop(timeout=5); helper.remove(); helper = None
+        if helper is None:
+            helper = self.client.containers.create(self.relay_image,
+                name=f"fjordvpn-{p['id']}-internet", labels=self.labels(p['id'], 'internet'),
+                command=['python', '/app/internet_gateway_worker.py'], network_mode='container:'+vpn.id,
+                cap_drop=['ALL'], cap_add=['NET_ADMIN'], read_only=True, init=True,
+                security_opt=['no-new-privileges:true'], mem_limit='64m', restart_policy=self.restart_policy,
+                volumes={str(host_folder/'internet-server.key'): {'bind':'/config/server.key','mode':'ro'},
+                         str(host_folder/'internet-settings.json'): {'bind':'/config/settings.json','mode':'ro'},
+                         str(host_folder/'observed'): {'bind':'/observed','mode':'rw'}},
+                log_config=docker.types.LogConfig(type='json-file', config={'max-size':'1m','max-file':'2'}))
+        if helper.status != 'running':
+            helper.start()
 
     def tcp_firewall(self, vpn, profile, folder):
         """Manage only our tagged TCP rules on the VPN interface."""
@@ -202,6 +291,20 @@ class Runtime:
                     result['tcp_status'][row['id']] = status
             result['seedbox_status'] = self.seedbox_status(p, result)
         result['fjorddrop_status'] = self.fjorddrop_status(p, result)
+        if p.get('internet_gateway', {}).get('enabled'):
+            result['internet_status'] = self.internet_status(p, result)
+        return result
+
+    def internet_status(self, p, observed):
+        result = dict(state='pending' if p['desired'] else 'off',
+                      message='Afventer VPN og serverens WireGuard-relæ.' if p['desired'] else 'VPN er slukket.')
+        if observed.get('state') == 'online':
+            try:
+                state = json.loads((self.store.directory(p['id'])/'observed/internet-status.json').read_text())
+                if 0 <= time.time()-state['checked_at'] < 20:
+                    result.update({k:state[k] for k in ('state','message')})
+            except (OSError, ValueError, KeyError):
+                pass
         return result
 
     def fjorddrop_status(self, p, observed):
@@ -307,6 +410,8 @@ class Runtime:
         if p['desired']:
             raise ValueError('Sluk VPN’en, før du sletter den.')
         containers = [self.container(p['id'], kind) for kind in ('relay','vpn')]
+        if p.get('internet_gateway', {}).get('subnet'):
+            containers.insert(0, self.container(p['id'], 'internet'))
         for c in containers:
             if c:
                 c.reload()
@@ -336,7 +441,8 @@ class Runtime:
             return
         from concurrent.futures import ThreadPoolExecutor
         def stop_profile(p):
-            for kind in ('relay','vpn'):
+            kinds = ('internet','relay','vpn') if p.get('internet_gateway',{}).get('enabled') else ('relay','vpn')
+            for kind in kinds:
                 try:
                     c=self.container(p['id'],kind)
                     if c:
