@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from runtime import Runtime, LABEL, OWNER
+from test_app import app, config
 
 
 @pytest.fixture
@@ -33,8 +34,8 @@ def fixture():
         return iter([buf.getvalue()]), {}
     child.get_archive.side_effect = lambda _:report()
     def check():
-        return runtime.seedbox_status({'id':'profile','desired':True},
-                                      {'state':'online','public_ip':'1.2.3.4'})
+        return runtime.seedbox_status({'id':'profile','desired':True,'gateway':{'enabled':status.get('_gateway',True)}},
+                                      {'state':'online','public_ip':'1.2.3.4','public_port':50294})
     return check, status, child, client
 
 
@@ -71,3 +72,58 @@ def test_foreign_installation_hidden_and_read_failure_red(fixture):
     assert check()['state']=='error' and 'secret' not in check()['message']
     child.labels['dk.fjordseed.vpn-project']='foreign'
     assert check() is None
+
+
+def test_solo_uses_actual_namespace_and_current_vpn_port(fixture):
+    check, status, child, client = fixture
+    status.update(_gateway=False, torrent_mode='dedicated', internal_port=50294)
+    child.labels['dk.fjordseed.torrent-internal-port']='0'
+    assert check()['state']=='ready'
+    assert 'torrent-mode=gateway' not in str(client.containers.list.call_args)
+    status['public_torrent_port']=50295
+    assert check()['state']=='pending'
+    status['public_torrent_port']=50294
+    child.attrs['HostConfig']['NetworkMode']='container:old-vpn'
+    assert check()['state']=='pending'
+
+
+def test_unattached_profile_has_no_seedbox(fixture):
+    check, _, _, client = fixture
+    client.containers.list.return_value=[]
+    assert check() is None
+
+
+def test_solo_connection_card_desktop_and_mobile(app):
+    import threading
+    from pathlib import Path
+    from werkzeug.serving import make_server
+    from playwright.sync_api import sync_playwright, expect
+    store=app.extensions['store']
+    store.create({'name':'FjordSeed - Ekstra'}, config())
+    runtime=app.extensions['runtime'];original=runtime.status
+    runtime.status=lambda p:dict(original(p), seedbox_status={
+        'state':'ready','public_port':33138,'message':'Download og upload bruger denne VPN.'})
+    server=make_server('127.0.0.1',0,app,threaded=True)
+    threading.Thread(target=server.serve_forever,daemon=True).start()
+    try:
+        with sync_playwright() as pw:
+            browser=pw.chromium.launch()
+            page=browser.new_page()
+            errors=[];page.on('pageerror',lambda error:errors.append(str(error)))
+            page.goto(f'http://127.0.0.1:{server.server_port}')
+            password=(store.root/'initial-login.txt').read_text(encoding='utf-8').splitlines()[1].split(': ',1)[1]
+            page.locator('[name=username]').fill('admin')
+            page.locator('[name=password]').fill(password)
+            page.get_by_role('button',name='Log ind').click()
+            for width in (1440,390):
+                page.set_viewport_size({'width':width,'height':1000})
+                expect(page.locator('.connected-apps-label')).to_have_text('Tilknyttede apps')
+                expect(page.locator('.seedbox-status')).to_contain_text('FjordSeed · Forbundet')
+                expect(page.locator('.seedbox-status')).to_contain_text('TCP/UDP :33138')
+                assert page.locator('.vpn-card').evaluate('(d)=>d.scrollWidth<=d.clientWidth+1')
+                Path('test-results').mkdir(exist_ok=True)
+                page.screenshot(path=f'test-results/connections-{width}.png')
+            assert not errors
+            browser.close()
+    finally:
+        server.shutdown()

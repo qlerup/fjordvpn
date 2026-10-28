@@ -289,7 +289,7 @@ class Runtime:
                     elif tcp.get('state') == 'error':
                         status.update(state='error', message='TCP-porten kunne ikke åbnes eller fornyes.')
                     result['tcp_status'][row['id']] = status
-            result['seedbox_status'] = self.seedbox_status(p, result)
+        result['seedbox_status'] = self.seedbox_status(p, result)
         result['fjorddrop_status'] = self.fjorddrop_status(p, result)
         if p.get('internet_gateway', {}).get('enabled'):
             result['internet_status'] = self.internet_status(p, result)
@@ -362,9 +362,10 @@ class Runtime:
     def seedbox_status(self, p, observed):
         """Read only the worker's public health report, never its credentials."""
         pending = dict(state='pending', message='Afventer FjordSeed og torrentport.', public_port=None)
+        mode = 'gateway' if p.get('gateway', {}).get('enabled') else 'dedicated'
         try:
             children = self.client.containers.list(all=True, filters={'label':[
-                'dk.fjordseed.owner', LABEL+'='+p['id'], 'dk.fjordseed.torrent-mode=gateway']})
+                'dk.fjordseed.owner', LABEL+'='+p['id']]})
             children = [c for c in children
                         if c.labels.get('dk.fjordseed.vpn-project') == self.project]
             if not children:
@@ -377,7 +378,7 @@ class Runtime:
             vpn = self.container(p['id'], 'vpn')
             if (not vpn or vpn.status != 'running' or not p['desired']
                     or observed['state'] != 'online'):
-                return dict(pending, message='Afventer gatewayens VPN-forbindelse.')
+                return dict(pending, message='Afventer den valgte VPN-forbindelse.')
             if (child.attrs['HostConfig']['NetworkMode'] != 'container:'+vpn.id
                     or child.labels.get('dk.fjordseed.vpn-generation') != vpn.id+':'+vpn.attrs['State']['StartedAt']):
                 return dict(pending, message='FjordSeed skifter til den aktuelle VPN-forbindelse.')
@@ -395,12 +396,15 @@ class Runtime:
             if not 0 <= time.time()-status['checked_at'] < 10:
                 return dict(pending, message='Afventer en frisk status fra FjordSeed.')
             port = status.get('public_torrent_port')
-            if (status.get('ready') is True and status.get('torrent_mode') == 'gateway'
+            valid_port = (str(status.get('internal_port')) == child.labels.get('dk.fjordseed.torrent-internal-port')
+                          if mode == 'gateway' else status.get('internal_port') == port == observed.get('public_port'))
+            if (status.get('ready') is True and status.get('torrent_mode') == mode
                     and status.get('public_ip') == observed['public_ip']
                     and type(port) is int and 1 <= port <= 65535
-                    and str(status.get('internal_port')) == child.labels.get('dk.fjordseed.torrent-internal-port')):
+                    and valid_port):
                 return dict(state='ready', public_port=port,
-                            message='Forbundet gennem gatewayens VPN med egen TCP/UDP-torrentport.')
+                            message='Forbundet gennem gatewayens VPN med egen TCP/UDP-torrentport.' if mode == 'gateway'
+                            else 'qBittorrents download og upload bruger denne VPN og dens TCP/UDP-port.')
             return pending
         except (docker.errors.DockerException, OSError, ValueError, KeyError, TypeError, tarfile.TarError):
             return dict(pending, state='error', message='FjordSeeds forbindelsesstatus kunne ikke kontrolleres.')

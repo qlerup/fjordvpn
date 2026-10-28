@@ -14,7 +14,7 @@ function card(p,legacy=false){
  if(gateway)names.querySelector('.card-subtitle').textContent='VPN-gateway · HTTPS';
  const row=el('div','address-row'),address=el('div'); address.append(el('p','label','Offentlig IP og port')); const value=p.public_ip?(p.public_ip+(p.public_port?':'+p.public_port:'')):'Afventer forbindelse'; address.append(el('p','address',value));row.append(address);
  if(p.public_ip){const copy=el('button','copy-button','Kopiér');copy.type='button';copy.addEventListener('click',()=>copyText(value));row.append(copy);} main.append(row); if(p.public_ip&&!legacy) main.append(countryInfo(p.country));
- const targetRow=el('div','target-row'),target=el('div');target.append(el('p','label','Lokalt mål'),el('p','target',p.host&&p.port?`${p.host}:${p.port}`:'Intet mål valgt'));targetRow.append(target,el('span','small muted',p.relay_active?'TCP aktiv':legacy?'Eksisterende opsætning':p.relay_enabled?'TCP afventer':'TCP slået fra'));main.append(targetRow);
+ const targetRow=el('div','target-row'),target=el('div');target.append(el('p','label','TCP-videresendelse'),el('p','target',p.host&&p.port?`${p.host}:${p.port}`:'Ingen TCP-videresendelse'));targetRow.append(target,el('span','small muted',p.relay_active?'TCP aktiv':legacy?'Eksisterende opsætning':p.relay_enabled?'TCP afventer':'TCP slået fra'));main.append(targetRow);
  if(p.stream_sync?.enabled) main.append(el('p','small '+(p.stream_status?.ok?'':'muted'),p.stream_status?.message||'Automatisk DNS og streamport afventer kontrol.'));
  if(!gateway&&p.internet_gateway?.enabled){
   const check=p.internet_status||{state:'pending',message:'Afventer serverens WireGuard-relæ.'};
@@ -29,7 +29,7 @@ function card(p,legacy=false){
  if(gateway){
   const mc=p.gateway.minecraft,routeRows=[...p.gateway.routes,...(mc?.enabled?[{...mc,minecraft:true}]:[]),...(p.gateway.gameservers||[]).map(row=>({...row,minecraft:true}))];
   const count=routeRows.length+gatewayTCPRows(p.gateway.tcp).length;
-  target.querySelector('.target').textContent=count+' mål';targetRow.lastChild.textContent=p.relay_active?(routeRows.some(r=>r.minecraft)?'HTTPS + gameserver aktiv':'Gateway aktiv'):'Gateway afventer';
+  target.querySelector('.label').textContent='Lokale mål';target.querySelector('.target').textContent=count+' mål';targetRow.lastChild.textContent=p.relay_active?(routeRows.some(r=>r.minecraft)?'HTTPS + gameserver aktiv':'Gateway aktiv'):'Gateway afventer';
   const runtimeError=p.state==='error',available=p.desired&&p.state==='online'&&p.relay_active;
   const checks=available?(p.gateway_status?.routes||{}):{};
   for(const route of routeRows){
@@ -65,7 +65,8 @@ function card(p,legacy=false){
   }
   }
  }
- if(gateway&&p.seedbox_status){
+ if(p.seedbox_status||(p.fjorddrop_status||[]).length)main.append(el('p','label connected-apps-label','Tilknyttede apps'));
+ if(p.seedbox_status){
   const check=p.seedbox_status,state=['ready','pending','error','off'].includes(check.state)?check.state:'pending';
   const label={ready:'Forbundet',pending:'Forbinder',error:'Fejl',off:'Stoppet'}[state];
   const item=el('div','gateway-card-route seedbox-status'),name=el('span','gateway-route-name');
