@@ -102,6 +102,21 @@ def test_upload_multiple_keep_secrets_server_side(app):
     assert len(app.extensions['store'].all())==2
 
 
+def test_online_plain_tcp_profile_can_be_listed(app,monkeypatch):
+    c,h=login(app)
+    response=upload(c,h,start=True,host='192.168.1.96',port=32400,relay_enabled=True)
+    assert response.status_code==201
+    ident=response.json['id']
+    runtime=app.extensions['runtime']
+    monkeypatch.setattr(runtime,'status',lambda p:dict(p,state='online',relay_active=True,
+        public_ip='185.111.109.2',public_port=46273))
+    response=c.get('/api/profiles')
+    assert response.status_code==200
+    profile=next(p for p in response.json['profiles'] if p['id']==ident)
+    assert profile['relay_active'] is True
+    assert profile['gateway_status']=={}
+
+
 @pytest.mark.parametrize('addition',[b'PostUp = touch /tmp/oops\n',b'PreDown = reboot\n',b'Address = 10.0.0.2/32\n'])
 def test_reject_hooks_and_duplicate_config(addition):
     raw=config().replace(b'[Peer]',addition+b'\n[Peer]')

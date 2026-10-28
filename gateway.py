@@ -226,6 +226,8 @@ class GatewaySync:
 
     def status(self,profile,observed):
         """Never expose readiness checked for an old configuration or VPN endpoint."""
+        if not profile.get('gateway',{}).get('enabled'):
+            return {}
         cached=self.statuses.get(profile['id'],{})
         if (not profile['desired'] or observed.get('state')!='online' or not observed.get('relay_active')
                 or cached.get('_signature')!=self.signature(profile,observed)
