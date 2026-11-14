@@ -141,6 +141,26 @@ Gateway cards show FjordSeed attachment, torrent port and green/orange/red/gray 
 
 ## Dedicated TCP forwarding and direct Flix delivery
 
+### Live traffic and delivery measurements
+
+Each VPN card shows upload and download in Mbit/s, measured passively on the
+WireGuard tunnel about every two seconds. Upload means traffic leaving the VPN
+towards the internet; a Plex stream therefore appears as upload. A five-minute
+graph and a recent average show changes while traffic is running.
+
+“Leveret via TCP” measures bytes acknowledged by remote TCP receivers, like the
+measurement used to investigate a buffering Plex stream. It covers all active
+outgoing TCP connections on that VPN, not only Plex. UDP traffic is included in
+upload/download but has no TCP acknowledgement measurement. Idle connections
+cannot reveal maximum available capacity. Missing/stale measurements are shown
+as unavailable, and tunnel restarts reset the baseline instead of producing
+spikes. No test downloads or speed-test uploads run in the background.
+
+The Online counter and bot recovery/port notifications wait for all configured
+parts: tunnel health, public IP and port, forwarding, local TCP target, server
+WireGuard handshake, DNS/HTTPS gateway checks and enabled Plex synchronization.
+The card lists outstanding checks while setup is incomplete.
+
 Each VPN profile owns a Gluetun namespace and optional TCP relay to one LAN `IP:port`; a reverse proxy at the target can distribute HTTPS. The UI stays available while VPNs are off. Failed health checks close the relay, and assigned-port changes are followed. Other server outbound traffic is unchanged. Imported IPv6 is excluded; OpenVPN and generic UDP relays are unsupported. IP/port can change; your gateway supplies HTTPS.
 
 ### Cloudflare keys and synchronization

@@ -90,7 +90,7 @@ class EventNotifier:
                     continue
                 active.add(ident)
                 item = tracked.setdefault(ident, {"first_bad": None, "alerted": False})
-                online = row.get("state") == "online"
+                online = row.get("state") == "online" and row.get("ready") is True
                 if ident not in ports and not online:
                     ports[ident] = None
                 if online:

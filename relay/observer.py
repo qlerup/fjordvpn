@@ -7,6 +7,7 @@ import os
 import re
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 import threading
@@ -128,6 +129,8 @@ class LocationPage(HTMLParser):
 
 
 def observe():
+    from relay.traffic import TrafficMonitor
+    traffic = TrafficMonitor()
     from relay.gateway_tcp import Forwarders
     tcp = Forwarders(stop)
     process, current = None, None
@@ -189,11 +192,19 @@ def observe():
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     current = wanted
             state['relay_active'] = bool(process and process.poll() is None)
+            state['target_ready'] = False
+            if state['relay_active'] and wanted and wanted[0] != 'gateway':
+                try:
+                    with socket.create_connection((wanted[1], wanted[2]), timeout=1):
+                        state['target_ready'] = True
+                except OSError:
+                    pass
             state['tcp_status'] = tcp.update(direct, state['public_ip'], state['public_port'],
                                              state['revision'], state['healthy'])
             if state['relay_active']:
                 state['message'] = 'HTTPS-gateway aktiv' if wanted and wanted[0]=='gateway' else 'TCP-videresendelse aktiv'
             state['checked_at'] = time.time()
+            state['traffic'] = traffic.sample()
             temporary = Path('/observed/status.tmp')
             temporary.write_text(json.dumps(state))
             temporary.replace('/observed/status.json')

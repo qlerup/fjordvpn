@@ -261,6 +261,8 @@ class Runtime:
                     if 0 <= time.time() - obs['checked_at'] < 20:
                         result.update({k:obs[k] for k in ('public_ip','public_port','relay_active','message','checked_at')})
                         result['country'] = obs.get('country', '')
+                        result['traffic'] = obs.get('traffic', {'state': 'unavailable', 'history': []})
+                        result['target_ready'] = obs.get('target_ready', False)
                         result['state'] = 'online' if obs['healthy'] else 'connecting'
                         if obs.get('revision') != p['revision']:
                             result.update(relay_active=False, message='Anvender videresendelse…')

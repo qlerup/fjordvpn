@@ -173,19 +173,23 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
     def index():
         return render_template('index.html', csrf=session['csrf'], networks=', '.join(map(str,networks)))
 
+    def profile_status(p):
+        from internet_gateway import config_ready
+        from readiness import readiness
+        observed=runtime.status(p)
+        result = dict(observed, stream_status=stream_sync.statuses.get(p['id'], {}),
+            internet_config_ready=bool(p.get('internet_gateway',{}).get('enabled') and
+                config_ready(store.directory(p['id']))),
+            gateway_status=gateway_sync.status(p,observed),
+            plex_status=plex_sync.status(p,observed),
+            cloudflare_token_saved=(store.directory(p['id'])/'cloudflare-token').exists())
+        result.update(readiness(result))
+        return result
+
     @app.get('/api/profiles')
     def profiles():
         with store.lock:
-            def listed(p):
-                from internet_gateway import config_ready
-                observed=runtime.status(p)
-                return dict(observed, stream_status=stream_sync.statuses.get(p['id'], {}),
-                    internet_config_ready=bool(p.get('internet_gateway',{}).get('enabled') and
-                        config_ready(store.directory(p['id']))),
-                    gateway_status=gateway_sync.status(p,observed),
-                    plex_status=plex_sync.status(p,observed),
-                    cloudflare_token_saved=(store.directory(p['id'])/'cloudflare-token').exists())
-            return jsonify(profiles=[listed(p) for p in store.all()])
+            return jsonify(profiles=[profile_status(p) for p in store.all()])
 
     @app.get('/api/cloudflare-keys')
     def cloudflare_keys():
@@ -300,7 +304,7 @@ def create_app(root=None, testing=False, runtime_factory=Runtime):
                 app.logger.error('Driftskontrol fejlede; prøver igen.')
             try:
                 with store.lock:
-                    statuses=[runtime.status(p) for p in store.all()]
+                    statuses=[profile_status(p) for p in store.all()]
                 notifier.observe_vpn(statuses)
             except Exception:
                 app.logger.exception('FjordVPN notifikationskontrol fejlede.')

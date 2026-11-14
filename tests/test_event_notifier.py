@@ -17,10 +17,27 @@ class Hub:
         return {"ok": True}
 
 
+def test_recovery_and_port_notice_wait_for_full_readiness(tmp_path):
+    notifier = EventNotifier(tmp_path, Hub(), 'fjordvpn')
+    row = dict(id='plex', name='Plex', desired=True, state='error', ready=False)
+    notifier.observe_vpn([row], now=100)
+    notifier.observe_vpn([row], now=113)
+    assert [e['type'] for e in notifier.state['pending']] == ['vpn_failed']
+    partial = dict(row, state='online', public_port=58591)
+    for now in [120, 150, 180]:
+        notifier.observe_vpn([partial], now=now)
+    assert [e['type'] for e in notifier.state['pending']] == ['vpn_failed']
+    notifier.observe_vpn([dict(partial, ready=True)], now=190)
+    assert [e['type'] for e in notifier.state['pending']] == [
+        'vpn_failed', 'vpn_port_changed', 'vpn_recovered']
+    notifier.observe_vpn([dict(partial, ready=True)], now=200)
+    assert len(notifier.state['pending']) == 3
+
+
 def test_vpn_port_change_survives_restart_outage_and_retries(tmp_path):
     hub = Hub()
     notifier = EventNotifier(tmp_path, hub, "fjordvpn")
-    row = dict(id="a", name="Proton A", desired=True, state="online", public_port=12345)
+    row = dict(id="a", name="Proton A", desired=True, state="online", ready=True, public_port=12345)
     notifier.observe_vpn([row])
     assert not notifier.state["pending"]
     notifier = EventNotifier(tmp_path, hub, "fjordvpn")
@@ -51,7 +68,7 @@ def test_vpn_first_assignment_after_waiting_and_deleted_profiles(tmp_path):
     notifier = EventNotifier(tmp_path, Hub(), "fjordvpn")
     row = dict(id="a", name="Proton A", desired=True, state="connecting", public_port=None)
     notifier.observe_vpn([row])
-    notifier.observe_vpn([dict(row, state="online", public_port=12345)])
+    notifier.observe_vpn([dict(row, state="online", ready=True, public_port=12345)])
     assert notifier.state["pending"][0]["previous_port"] is None
     notifier.observe_vpn([])
     assert notifier.state["vpn_ports"] == {}
@@ -79,7 +96,7 @@ def test_vpn_reports_sustained_multiple_failures_once_and_recovery(tmp_path):
     again.observe_vpn(bad, now=1030)
     again.flush()
     assert len(hub.calls) == 1
-    recovered = [dict(p, state="online") for p in bad]
+    recovered = [dict(p, state="online", ready=True) for p in bad]
     again.observe_vpn(recovered, now=1032)
     again.flush()
     assert hub.calls[-1][1]["type"] == "vpn_recovered"
