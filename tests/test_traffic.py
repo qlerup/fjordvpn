@@ -70,3 +70,25 @@ def test_history_is_bounded_and_new_connections_need_a_baseline(tmp_path):
         result = m.sample(10 + i * 2, 100 + i * 2)
     assert len(result['history']) == 150
     assert result['delivered_mbps'] == 0
+
+
+def test_api_uses_server_clock_for_measurement_freshness(tmp_path, monkeypatch):
+    from runtime import Runtime
+    runtime = Runtime.__new__(Runtime)
+    runtime.store = SimpleNamespace(directory=lambda ident: tmp_path)
+    runtime.container = lambda *args: SimpleNamespace(status='running')
+    runtime.errors = {}
+    runtime.seedbox_status = lambda *args: None
+    runtime.fjorddrop_status = lambda *args: []
+    monkeypatch.setattr('runtime.time.time', lambda: 1000)
+    (tmp_path / 'observed').mkdir()
+    report = dict(checked_at=999, healthy=True, public_ip='185.111.109.2',
+                  public_port=12345, relay_active=False, message='VPN klar', revision='a',
+                  traffic=dict(state='ready', at=998, history=[]))
+    path = tmp_path / 'observed/status.json'
+    path.write_text(json.dumps(report))
+    profile = dict(id='test', desired=True, revision='a')
+    assert runtime.status(profile)['traffic']['age_seconds'] == 2
+    report['checked_at'] = 900
+    path.write_text(json.dumps(report))
+    assert 'traffic' not in runtime.status(profile)

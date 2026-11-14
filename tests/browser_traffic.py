@@ -10,7 +10,7 @@ from werkzeug.serving import make_server
 class DemoRuntime(FakeRuntime):
  def status(self,p):
   now=time.time();history=[dict(at=now-2*(29-i),download_mbps=1+i%4,upload_mbps=15+i%12,delivered_mbps=14+i%10) for i in range(30)]
-  return dict(super().status(p),state='online',public_ip='185.111.109.2',public_port=58591,traffic=dict(history[-1],state='ready',history=history))
+  return dict(super().status(p),state='online',public_ip='185.111.109.2',public_port=58591,traffic=dict(history[-1],state='ready',age_seconds=0,history=history))
 (root/'test-results').mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory() as data:
  app=create_app(data,testing=True,runtime_factory=DemoRuntime);store=app.extensions['store'];p=store.create({'name':'Plex - VPN'},config());store.power(p['id'],True)
@@ -25,6 +25,9 @@ with tempfile.TemporaryDirectory() as data:
    expect(page.locator('.traffic-panel')).to_contain_text('Leveret i snit:')
    for width in [1440,390]:
     page.set_viewport_size({'width':width,'height':1000});assert page.evaluate('document.documentElement.scrollWidth<=innerWidth');page.screenshot(path=str(root/'test-results'/f'traffic-{width}.png'),full_page=True)
+   for offset in [-604800000,604800000]:
+    page.evaluate('(offset)=>{Date.now=()=>1700000000000+offset}',offset)
+    page.evaluate('refresh()');expect(page.locator('.traffic-values')).to_be_visible()
    store.power(p['id'],False);page.evaluate('refresh()');expect(page.locator('.traffic-panel')).to_contain_text('VPN er slukket.');expect(page.locator('.traffic-chart')).to_have_count(0)
    assert not errors,errors
    browser.close();print('Desktop/mobile live rates, graph, offline state and JavaScript: OK')

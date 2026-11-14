@@ -2,7 +2,7 @@
 function trafficPanel(profile) {
  const box=el('section','traffic-panel');box.setAttribute('aria-label','Live trafik for '+profile.name);
  const heading=el('div','traffic-heading');heading.append(el('p','label','Forbindelse lige nu'),el('span','small muted','Mbit/s'));box.append(heading);
- const traffic=profile.traffic, fresh=traffic?.state==='ready' && Date.now()/1000-traffic.at>=0 && Date.now()/1000-traffic.at<20;
+ const traffic=profile.traffic, fresh=traffic?.state==='ready' && Number.isFinite(traffic.age_seconds) && traffic.age_seconds>=0 && traffic.age_seconds<20;
  if(!profile.desired || !fresh){box.append(el('p','small muted',!profile.desired?'VPN er slukket.':traffic?.state==='warming'?'Indsamler måling…':'Afventer en frisk trafikmåling.'));return box;}
  const values=el('div','traffic-values');
  const format=value=>Number.isFinite(value)?value.toLocaleString('da-DK',{minimumFractionDigits:1,maximumFractionDigits:1}):'—';
