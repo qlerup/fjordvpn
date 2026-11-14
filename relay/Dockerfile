@@ -1,5 +1,5 @@
 FROM python:3.13-alpine
-RUN apk add --no-cache socat
+RUN apk upgrade --no-cache && apk add --no-cache socat
 WORKDIR /app
 COPY observer.py /app/observer.py
 COPY gateway_tcp.py /app/relay/gateway_tcp.py

@@ -1,15 +1,15 @@
-FROM caddy:2.11.4-builder-alpine AS gateway-builder
-RUN xcaddy build v2.11.4 --with github.com/caddy-dns/cloudflare@v0.2.4 --with github.com/mholt/caddy-l4@v0.1.2
+FROM caddy:2.11.9-builder-alpine AS gateway-builder
+RUN xcaddy build v2.11.9 --with github.com/caddy-dns/cloudflare@v0.2.4 --with github.com/mholt/caddy-l4@v0.1.3
 
 FROM python:3.13-alpine
 COPY --from=gateway-builder /usr/bin/caddy /usr/bin/caddy
 # The observer drops every capability. Caddy's file capability otherwise makes
 # execve fail with EPERM; forwarded high ports need no privileged bind right.
 RUN python -c "import os; p='/usr/bin/caddy'; os.removexattr(p,'security.capability') if 'security.capability' in os.listxattr(p) else None"
-RUN apk add --no-cache socat iproute2 iptables wireguard-tools
+RUN apk upgrade --no-cache && apk add --no-cache socat iproute2 iptables wireguard-tools
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip==26.3 && pip install --no-cache-dir -r requirements.txt
 COPY app.py event_notifier.py hub_email.py configuration.py hub.py runtime.py store.py stream_sync.py gateway.py minecraft_gateway.py ./
 COPY seedbox_export.py plex_sync.py ./
 COPY internet_gateway.py ./
